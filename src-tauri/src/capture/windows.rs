@@ -60,6 +60,10 @@ impl CaptureBackend for Windows {
         "ffmpeg not found. Install it (winget install Gyan.FFmpeg), drop ffmpeg.exe next to Recap, or set RECAP_FFMPEG."
     }
 
+    fn stall_hint(&self) -> &'static str {
+        "No frames were captured. Desktop Duplication couldn't read this display — it doesn't work over Remote Desktop, on a locked screen, or when the display is driven by a different GPU than the one ffmpeg picked."
+    }
+
     /// ddagrab has no enumeration API of its own — the caller falls back to
     /// Tauri's monitor list, where `output_idx` is the monitor index.
     fn screens(&self, _ff: &Path) -> Vec<ScreenDevice> {

@@ -14,6 +14,7 @@ use std::collections::VecDeque;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Child, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
@@ -303,12 +304,28 @@ fn spawn_segment(app: &AppHandle, session_id: u64) -> Result<(), String> {
     let mut cmd = ffmpeg::quiet_command(&ff);
     cmd.args(&args)
         .stdin(Stdio::piped())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped()) // -progress stream; see spawn_stall_watchdog
         .stderr(Stdio::piped());
 
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("failed to start ffmpeg: {e}"))?;
+
+    // Frames encoded so far in this segment, fed by the -progress reader below.
+    let frames = Arc::new(AtomicU64::new(0));
+    if let Some(stdout) = child.stdout.take() {
+        let frames = frames.clone();
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader};
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if let Some(n) = line.trim_start().strip_prefix("frame=") {
+                    if let Ok(n) = n.trim().parse::<u64>() {
+                        frames.store(n, Ordering::Relaxed);
+                    }
+                }
+            }
+        });
+    }
 
     if let Some(stderr) = child.stderr.take() {
         let tail = r.stderr_tail.clone();
@@ -325,8 +342,47 @@ fn spawn_segment(app: &AppHandle, session_id: u64) -> Result<(), String> {
     }
 
     r.child = Some(child);
-    r.segments.push(seg_path);
+    r.segments.push(seg_path.clone());
+    drop(r); // watchdog thread needs the lock
+    spawn_stall_watchdog(app, session_id, seg_path, frames);
     Ok(())
+}
+
+/// How long a segment may produce zero frames before we call it dead.
+/// Generous on purpose: a cold VideoToolbox session plus the first Retina grab
+/// can take a beat, and a false positive kills a real recording.
+const STALL_GRACE: Duration = Duration::from_secs(8);
+
+/// A refused screen-capture permission doesn't make ffmpeg exit — it makes it
+/// sit there forever, emitting nothing and reporting no error. Left alone the
+/// UI would show a happily ticking timer and then produce an empty file, so
+/// watch the frame counter and fail loudly instead.
+fn spawn_stall_watchdog(
+    app: &AppHandle,
+    session_id: u64,
+    seg_path: PathBuf,
+    frames: Arc<AtomicU64>,
+) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(STALL_GRACE);
+        if frames.load(Ordering::Relaxed) > 0 {
+            return; // capturing fine
+        }
+        {
+            let handle = app.state::<RecorderHandle>();
+            let r = handle.0.lock().unwrap();
+            // Superseded by a stop, pause, cancel, or a newer segment? Then
+            // zero frames is expected and none of our business.
+            if r.session_id != session_id
+                || r.status != Status::Recording
+                || r.segments.last() != Some(&seg_path)
+            {
+                return;
+            }
+        }
+        fail(&app, capture::active().stall_hint().to_string());
+    });
 }
 
 fn resolve_encoder(requested: &str, available: &[String]) -> String {

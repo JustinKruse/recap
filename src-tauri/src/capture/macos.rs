@@ -107,6 +107,10 @@ impl CaptureBackend for MacOs {
         "ffmpeg not found. Put a static build at vendor/ffmpeg, set RECAP_FFMPEG to its path, or install it (brew install ffmpeg)."
     }
 
+    fn stall_hint(&self) -> &'static str {
+        "No frames were captured. macOS is almost certainly blocking screen recording: open System Settings → Privacy & Security → Screen Recording, enable Recap, then restart the app."
+    }
+
     fn screens(&self, ff: &Path) -> Vec<ScreenDevice> {
         parse_avfoundation_devices(&list_devices_stderr(ff)).0
     }

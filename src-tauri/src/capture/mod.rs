@@ -61,6 +61,11 @@ pub trait CaptureBackend: Send + Sync {
     /// Shown when ffmpeg can't be found anywhere.
     fn ffmpeg_hint(&self) -> &'static str;
 
+    /// Shown when ffmpeg started, didn't fail, and captured no frames anyway.
+    /// On both platforms that means the OS refused to hand over the screen —
+    /// silently, which is why we have to name the likely cause ourselves.
+    fn stall_hint(&self) -> &'static str;
+
     /// Enumerate capturable screens. An empty vec means "this backend can't
     /// enumerate — fall back to the windowing system's monitor list".
     fn screens(&self, ff: &Path) -> Vec<ScreenDevice>;
@@ -106,11 +111,18 @@ pub fn sanitize_region(x: i32, y: i32, w: u32, h: u32) -> (u32, u32, u32, u32) {
 }
 
 /// Common prefix for every segment invocation.
+///
+/// `-progress pipe:1` makes ffmpeg emit newline-separated `key=value` blocks on
+/// stdout twice a second. That's the recorder's proof of life: the frame count
+/// is the only reliable way to tell "capturing fine" from "stalled forever".
+/// It goes to stdout specifically to keep stderr as a clean error log.
 pub(crate) fn base_args() -> Vec<String> {
     vec![
         "-hide_banner".into(),
         "-loglevel".into(),
         "warning".into(),
+        "-progress".into(),
+        "pipe:1".into(),
         "-y".into(),
     ]
 }

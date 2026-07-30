@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Merged into the generated macOS bundle by tauri-bundler.
+
+  macOS kills a process that touches the microphone without a usage string, so
+  this is required for mic recording, not merely polite. Screen Recording has
+  no equivalent key — it's granted purely through System Settings.
+-->
+<plist version="1.0">
+<dict>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Recap records your microphone when you enable audio narration for a screen recording.</string>
+</dict>
+</plist>
