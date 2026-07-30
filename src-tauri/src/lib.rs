@@ -1,6 +1,8 @@
+mod capture;
 mod ffmpeg;
 mod recorder;
 
+use capture::AudioDevice;
 use recorder::{RecorderHandle, RecordingConfig};
 use serde::Serialize;
 use tauri::{
@@ -28,9 +30,11 @@ struct MonitorInfo {
 struct InitInfo {
     ffmpeg_path: Option<String>,
     encoders: Vec<String>,
-    audio_devices: Vec<String>,
+    audio_devices: Vec<AudioDevice>,
     monitors: Vec<MonitorInfo>,
     default_output_dir: String,
+    /// Which capture backend is active, e.g. "macos-avfoundation".
+    backend: &'static str,
 }
 
 fn monitor_list(app: &tauri::AppHandle) -> Vec<MonitorInfo> {
@@ -70,10 +74,15 @@ fn init_info(
     app: tauri::AppHandle,
     state: tauri::State<RecorderHandle>,
 ) -> Result<InitInfo, String> {
+    let backend = capture::active();
     let ffmpeg_path = ffmpeg::locate();
-    let (encoders, audio_devices) = match &ffmpeg_path {
-        Some(p) => (ffmpeg::usable_encoders(p), ffmpeg::list_audio_devices(p)),
-        None => (vec!["libx264".to_string()], Vec::new()),
+    let (encoders, audio_devices, screens) = match &ffmpeg_path {
+        Some(p) => (
+            ffmpeg::usable_encoders(p),
+            backend.audio_devices(p),
+            backend.screens(p),
+        ),
+        None => (vec!["libx264".to_string()], Vec::new(), Vec::new()),
     };
     let monitors = monitor_list(&app);
     let default_dir = default_output_dir(&app);
@@ -81,6 +90,7 @@ fn init_info(
         let mut r = state.0.lock().unwrap();
         r.ffmpeg_path = ffmpeg_path.clone();
         r.encoders = encoders.clone();
+        r.screens = screens;
         if r.config.output_dir.is_empty() {
             r.config.output_dir = default_dir.clone();
         }
@@ -91,6 +101,7 @@ fn init_info(
         audio_devices,
         monitors,
         default_output_dir: default_dir,
+        backend: backend.name(),
     })
 }
 

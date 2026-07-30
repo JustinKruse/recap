@@ -7,6 +7,7 @@
 //! always stopped by writing `q` to its stdin (a hard kill truncates the MP4
 //! moov atom); kill is only the 4-second timeout fallback.
 
+use crate::capture::{self, CaptureTarget, ScreenDevice};
 use crate::ffmpeg;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -96,6 +97,10 @@ pub struct Recorder {
     pub ffmpeg_path: Option<PathBuf>,
     /// Encoders that passed the runtime probe at startup.
     pub encoders: Vec<String>,
+    /// Screens as the capture backend enumerates them. Index is the UI's
+    /// monitor index; `.id` is the backend-native identifier. Empty when the
+    /// backend can't enumerate (Windows), where the two coincide.
+    pub screens: Vec<ScreenDevice>,
     child: Option<Child>,
     segments: Vec<PathBuf>,
     session_dir: Option<PathBuf>,
@@ -115,6 +120,7 @@ impl RecorderHandle {
             pending_overlay_monitor: 0,
             ffmpeg_path: None,
             encoders: vec!["libx264".into()],
+            screens: Vec::new(),
             child: None,
             segments: Vec::new(),
             session_dir: None,
@@ -179,7 +185,7 @@ pub fn set_region(app: &AppHandle, sel: RegionSel) {
     let handle = app.state::<RecorderHandle>();
     let (monitor_index, width, height) = {
         let mut r = handle.0.lock().unwrap();
-        let (x, y, w, h) = ffmpeg::sanitize_region(sel.x, sel.y, sel.width, sel.height);
+        let (x, y, w, h) = capture::sanitize_region(sel.x, sel.y, sel.width, sel.height);
         let monitor_index = r.pending_overlay_monitor;
         r.region = Some(Region {
             monitor_index,
@@ -219,9 +225,7 @@ pub fn start(app: &AppHandle) -> Result<(), String> {
             return Err("Already recording.".into());
         }
         if r.ffmpeg_path.is_none() {
-            return Err(
-                "ffmpeg not found. Install it (winget install Gyan.FFmpeg) or drop ffmpeg.exe next to Recap.".into(),
-            );
+            return Err(capture::active().ffmpeg_hint().to_string());
         }
         if r.config.mode == "region" && r.region.is_none() {
             return Err("Select a region first.".into());
@@ -288,7 +292,13 @@ fn spawn_segment(app: &AppHandle, session_id: u64) -> Result<(), String> {
 
     let encoder = resolve_encoder(&r.config.encoder, &r.encoders);
     let region = if r.config.mode == "region" { r.region } else { None };
-    let args = ffmpeg::segment_args(&r.config, region, &encoder, &seg_path);
+    // Region mode records whichever monitor the overlay was drawn on.
+    let monitor_index = region.map(|x| x.monitor_index).unwrap_or(r.config.monitor_index);
+    let target = CaptureTarget {
+        screen_id: resolve_screen_id(&r.screens, monitor_index),
+        region,
+    };
+    let args = capture::active().segment_args(&r.config, &target, &encoder, &seg_path);
 
     let mut cmd = ffmpeg::quiet_command(&ff);
     cmd.args(&args)
@@ -323,12 +333,22 @@ fn resolve_encoder(requested: &str, available: &[String]) -> String {
     if requested != "auto" {
         return requested.to_string();
     }
-    for enc in ffmpeg::HW_ENCODERS {
+    for enc in capture::active().hw_encoders() {
         if available.iter().any(|a| a == enc) {
             return enc.to_string();
         }
     }
     "libx264".to_string()
+}
+
+/// Map a UI monitor index to the backend's native screen id. Backends that
+/// can't enumerate (Windows/ddagrab) return an empty list, where the monitor
+/// index *is* the id.
+fn resolve_screen_id(screens: &[ScreenDevice], monitor_index: usize) -> u32 {
+    screens
+        .get(monitor_index)
+        .map(|s| s.id)
+        .unwrap_or(monitor_index as u32)
 }
 
 /// Ask ffmpeg to finish cleanly (writes `q`), fall back to kill after ~4s.

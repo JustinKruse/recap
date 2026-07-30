@@ -188,10 +188,12 @@ async function init() {
     els.micDev.appendChild(opt);
     els.mic.disabled = true;
   } else {
+    // `id` is an opaque backend token (a DirectShow name on Windows, an
+    // AVFoundation index on macOS) — display the label, send back the id.
     info.audioDevices.forEach((d) => {
       const opt = document.createElement("option");
-      opt.value = d;
-      opt.textContent = d;
+      opt.value = d.id;
+      opt.textContent = d.label;
       els.micDev.appendChild(opt);
     });
   }
