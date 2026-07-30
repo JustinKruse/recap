@@ -1,7 +1,9 @@
 // Region selection overlay.
 // The window covers one monitor exactly, so window coordinates == monitor
-// coordinates. ffmpeg's ddagrab wants PHYSICAL pixels, so everything emitted
-// is scaled by devicePixelRatio and rounded to even numbers (H.264 4:2:0).
+// coordinates. Both capture backends work in PHYSICAL pixels (ddagrab's
+// offsets on Windows, AVFoundation's Retina-native frames on macOS), so
+// everything emitted is scaled by devicePixelRatio and rounded to even
+// numbers (H.264 4:2:0).
 
 const { emit } = window.__TAURI__.event;
 

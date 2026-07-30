@@ -13,7 +13,12 @@ use crate::recorder::{RecordingConfig, Region};
 use serde::Serialize;
 use std::path::Path;
 
+// Whichever backend isn't active is still compiled — that's what keeps its
+// arg building unit-testable from the other platform — so nothing constructs
+// it and dead_code fires. Intentional, not rot.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub mod macos;
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub mod windows;
 
 /// A capturable screen, with its backend-native identifier. On Windows that's
