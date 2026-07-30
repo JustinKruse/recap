@@ -1,0 +1,330 @@
+// Recap — main window logic (vanilla JS, global Tauri API)
+
+const tauri = window.__TAURI__;
+if (!tauri) {
+  document.body.innerHTML =
+    '<p style="padding:20px;font-family:system-ui">Open this through the Tauri app (cargo tauri dev), not a browser.</p>';
+  throw new Error("Tauri API not available");
+}
+const invoke = tauri.core.invoke;
+const { listen } = tauri.event;
+
+// ---- element handles -------------------------------------------------------
+
+const $ = (id) => document.getElementById(id);
+const els = {
+  statusPill: $("status-pill"),
+  banner: $("ffmpeg-banner"),
+  modeFullscreen: $("mode-fullscreen"),
+  modeRegion: $("mode-region"),
+  regionRow: $("region-row"),
+  regionLabel: $("region-label"),
+  selectRegion: $("btn-select-region"),
+  monitor: $("sel-monitor"),
+  fps: $("sel-fps"),
+  encoder: $("sel-encoder"),
+  cursor: $("chk-cursor"),
+  mic: $("chk-mic"),
+  micDev: $("sel-mic"),
+  outDir: $("out-dir"),
+  outDirBtn: $("btn-out-dir"),
+  record: $("btn-record"),
+  pause: $("btn-pause"),
+  stop: $("btn-stop"),
+  timer: $("timer"),
+  countdown: $("countdown"),
+  countdownNum: $("countdown-num"),
+  toast: $("toast"),
+  toastMsg: $("toast-msg"),
+  toastAction: $("toast-action"),
+};
+
+const ENCODER_LABELS = {
+  auto: "Auto (best available)",
+  h264_nvenc: "NVIDIA NVENC",
+  h264_amf: "AMD AMF",
+  h264_qsv: "Intel QuickSync",
+  libx264: "Software (x264)",
+};
+
+// ---- state -----------------------------------------------------------------
+
+let mode = "fullscreen";
+let regionSet = false;
+let outputDir = "";
+let uiState = "idle"; // idle | countdown | recording | paused | finalizing
+
+// timer
+let accumulatedMs = 0;
+let resumedAt = null;
+let timerInterval = null;
+
+function setState(s) {
+  uiState = s;
+  document.body.dataset.state = s;
+  const labels = {
+    idle: "Ready",
+    countdown: "Starting…",
+    recording: "Recording",
+    paused: "Paused",
+    finalizing: "Saving…",
+  };
+  els.statusPill.textContent = labels[s] ?? s;
+  const busy = s === "recording" || s === "paused";
+  els.pause.disabled = !busy;
+  els.stop.disabled = !(busy || s === "countdown");
+  els.record.disabled = s === "finalizing";
+}
+
+// ---- timer -------------------------------------------------------------------
+
+function renderTimer() {
+  let ms = accumulatedMs;
+  if (resumedAt !== null) ms += Date.now() - resumedAt;
+  const total = Math.floor(ms / 1000);
+  const mm = String(Math.floor(total / 60)).padStart(2, "0");
+  const ss = String(total % 60).padStart(2, "0");
+  els.timer.textContent = `${mm}:${ss}`;
+}
+
+function timerStart() {
+  accumulatedMs = 0;
+  resumedAt = Date.now();
+  clearInterval(timerInterval);
+  timerInterval = setInterval(renderTimer, 250);
+  renderTimer();
+}
+function timerPause() {
+  if (resumedAt !== null) accumulatedMs += Date.now() - resumedAt;
+  resumedAt = null;
+  renderTimer();
+}
+function timerResume() {
+  resumedAt = Date.now();
+}
+function timerReset() {
+  clearInterval(timerInterval);
+  timerInterval = null;
+  accumulatedMs = 0;
+  resumedAt = null;
+  renderTimer();
+}
+
+// ---- toast -------------------------------------------------------------------
+
+let toastTimeout = null;
+function toast(message, kind = "ok", action = null) {
+  els.toast.hidden = false;
+  els.toast.className = `toast is-${kind}`;
+  els.toastMsg.textContent = message;
+  if (action) {
+    els.toastAction.hidden = false;
+    els.toastAction.textContent = action.label;
+    els.toastAction.onclick = action.onClick;
+  } else {
+    els.toastAction.hidden = true;
+    els.toastAction.onclick = null;
+  }
+  clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => (els.toast.hidden = true), kind === "error" ? 12000 : 7000);
+}
+
+// ---- config ------------------------------------------------------------------
+
+function currentConfig() {
+  return {
+    mode,
+    monitorIndex: Number(els.monitor.value || 0),
+    fps: Number(els.fps.value),
+    encoder: els.encoder.value,
+    captureCursor: els.cursor.checked,
+    micEnabled: els.mic.checked,
+    micDevice: els.micDev.value || null,
+    outputDir,
+  };
+}
+
+function syncConfig() {
+  invoke("sync_config", { cfg: currentConfig() }).catch(() => {});
+}
+
+// ---- init ---------------------------------------------------------------------
+
+async function init() {
+  renderTimer();
+  let info;
+  try {
+    info = await invoke("init_info");
+  } catch (e) {
+    toast(`Startup failed: ${e}`, "error");
+    return;
+  }
+
+  if (!info.ffmpegPath) {
+    els.banner.hidden = false;
+  }
+
+  els.monitor.innerHTML = "";
+  info.monitors.forEach((m) => {
+    const opt = document.createElement("option");
+    opt.value = String(m.index);
+    opt.textContent = `${m.name.replace(/^\\\\.\\/, "")} — ${m.width}×${m.height}`;
+    els.monitor.appendChild(opt);
+  });
+
+  els.encoder.innerHTML = "";
+  ["auto", ...info.encoders].forEach((enc) => {
+    const opt = document.createElement("option");
+    opt.value = enc;
+    opt.textContent = ENCODER_LABELS[enc] ?? enc;
+    els.encoder.appendChild(opt);
+  });
+
+  els.micDev.innerHTML = "";
+  if (info.audioDevices.length === 0) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "No devices found";
+    els.micDev.appendChild(opt);
+    els.mic.disabled = true;
+  } else {
+    info.audioDevices.forEach((d) => {
+      const opt = document.createElement("option");
+      opt.value = d;
+      opt.textContent = d;
+      els.micDev.appendChild(opt);
+    });
+  }
+
+  outputDir = info.defaultOutputDir;
+  els.outDir.textContent = outputDir;
+  els.outDir.title = outputDir;
+
+  syncConfig();
+}
+
+// ---- wiring --------------------------------------------------------------------
+
+function setMode(next) {
+  mode = next;
+  els.modeFullscreen.classList.toggle("is-active", mode === "fullscreen");
+  els.modeRegion.classList.toggle("is-active", mode === "region");
+  els.regionRow.hidden = mode !== "region";
+  syncConfig();
+}
+
+els.modeFullscreen.addEventListener("click", () => setMode("fullscreen"));
+els.modeRegion.addEventListener("click", () => setMode("region"));
+
+els.selectRegion.addEventListener("click", () => {
+  invoke("open_region_overlay", { monitorIndex: Number(els.monitor.value || 0) }).catch((e) =>
+    toast(String(e), "error")
+  );
+});
+
+for (const el of [els.monitor, els.fps, els.encoder, els.cursor, els.micDev]) {
+  el.addEventListener("change", syncConfig);
+}
+els.monitor.addEventListener("change", () => {
+  // A region belongs to the display it was drawn on.
+  regionSet = false;
+  els.regionLabel.textContent = "No region selected";
+  syncConfig();
+});
+els.mic.addEventListener("change", () => {
+  els.micDev.disabled = !els.mic.checked;
+  syncConfig();
+});
+
+els.outDirBtn.addEventListener("click", async () => {
+  const dir = await invoke("pick_output_dir").catch(() => null);
+  if (dir) {
+    outputDir = dir;
+    els.outDir.textContent = dir;
+    els.outDir.title = dir;
+    syncConfig();
+  }
+});
+
+els.record.addEventListener("click", () => {
+  if (uiState === "idle") {
+    if (mode === "region" && !regionSet) {
+      toast("Select a region first.", "error");
+      return;
+    }
+    invoke("start_recording", { cfg: currentConfig() }).catch((e) => toast(String(e), "error"));
+  } else {
+    invoke("stop_recording").catch((e) => toast(String(e), "error"));
+  }
+});
+els.stop.addEventListener("click", () => invoke("stop_recording").catch(() => {}));
+els.pause.addEventListener("click", () => invoke("toggle_pause").catch((e) => toast(String(e), "error")));
+
+// ---- events from rust ------------------------------------------------------------
+
+listen("countdown", ({ payload }) => {
+  const n = Number(payload);
+  if (n > 0) {
+    setState("countdown");
+    els.countdown.hidden = false;
+    els.countdownNum.textContent = String(n);
+  } else {
+    els.countdown.hidden = true;
+  }
+});
+
+listen("recording-started", () => {
+  setState("recording");
+  timerStart();
+});
+
+listen("recording-paused", () => {
+  setState("paused");
+  timerPause();
+});
+
+listen("recording-resumed", () => {
+  setState("recording");
+  timerResume();
+});
+
+listen("recording-stopped", ({ payload }) => {
+  setState("idle");
+  timerReset();
+  const path = payload?.path ?? "";
+  const name = path.split(/[\\/]/).pop();
+  toast(`Saved ${name}`, "ok", {
+    label: "Open folder",
+    onClick: () => invoke("reveal_path", { path }).catch(() => {}),
+  });
+});
+
+listen("recording-cancelled", () => {
+  els.countdown.hidden = true;
+  setState("idle");
+  timerReset();
+});
+
+listen("recording-error", ({ payload }) => {
+  els.countdown.hidden = true;
+  setState("idle");
+  timerReset();
+  const msg = payload?.message ?? "Recording failed.";
+  const log = payload?.log ? ` — ${String(payload.log).split("\n").slice(-2).join(" ")}` : "";
+  toast(`${msg}${log}`, "error");
+});
+
+listen("region-set", ({ payload }) => {
+  regionSet = true;
+  setMode("region");
+  els.regionLabel.textContent = `${payload.width}×${payload.height} px`;
+});
+
+// keep UI honest if state changed from tray/hotkeys while window was hidden
+listen("status", ({ payload }) => {
+  const s = payload?.status;
+  if (s === "finalizing") setState("finalizing");
+  if (s === "idle" && uiState === "finalizing") setState("idle");
+});
+
+init();

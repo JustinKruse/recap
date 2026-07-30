@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Recap</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body data-state="idle">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot" aria-hidden="true"></span>
+      <span class="brand-name">Recap</span>
+    </div>
+    <span id="status-pill" class="pill">Ready</span>
+  </header>
+
+  <div id="ffmpeg-banner" class="banner" hidden>
+    ffmpeg not found. Install it (<code>winget install Gyan.FFmpeg</code>)
+    or drop <code>ffmpeg.exe</code> next to Recap, then restart.
+  </div>
+
+  <main class="deck">
+
+    <section class="group">
+      <h2 class="eyebrow">Capture</h2>
+
+      <div class="mode-switch" role="tablist" aria-label="Capture mode">
+        <button id="mode-fullscreen" class="mode-btn is-active" role="tab">Full screen</button>
+        <button id="mode-region" class="mode-btn" role="tab">Region</button>
+      </div>
+
+      <div id="region-row" class="row region-row" hidden>
+        <span id="region-label" class="mono muted">No region selected</span>
+        <button id="btn-select-region" class="ghost-btn">Select region</button>
+      </div>
+
+      <label class="row">
+        <span>Display</span>
+        <select id="sel-monitor"></select>
+      </label>
+
+      <label class="row">
+        <span>Frame rate</span>
+        <select id="sel-fps">
+          <option value="24">24 fps</option>
+          <option value="30" selected>30 fps</option>
+          <option value="60">60 fps</option>
+        </select>
+      </label>
+
+      <label class="row">
+        <span>Encoder</span>
+        <select id="sel-encoder"></select>
+      </label>
+
+      <label class="row row-check">
+        <span>Show cursor</span>
+        <input id="chk-cursor" type="checkbox" checked />
+      </label>
+    </section>
+
+    <section class="group">
+      <h2 class="eyebrow">Audio</h2>
+      <label class="row row-check">
+        <span>Record microphone</span>
+        <input id="chk-mic" type="checkbox" />
+      </label>
+      <label class="row">
+        <span>Device</span>
+        <select id="sel-mic" disabled></select>
+      </label>
+    </section>
+
+    <section class="group">
+      <h2 class="eyebrow">Output</h2>
+      <div class="row">
+        <span id="out-dir" class="path mono" title="">…</span>
+        <button id="btn-out-dir" class="ghost-btn">Change</button>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="transport">
+    <div id="timer" class="timer mono">00:00</div>
+    <div class="transport-buttons">
+      <button id="btn-pause" class="side-btn" title="Pause / resume (Ctrl+Alt+P)" disabled>
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor"/>
+          <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/>
+        </svg>
+      </button>
+      <button id="btn-record" class="rec-btn" title="Start / stop (Ctrl+Alt+R)">
+        <span class="rec-core" aria-hidden="true"></span>
+      </button>
+      <button id="btn-stop" class="side-btn" title="Stop (Ctrl+Alt+R)" disabled>
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>
+        </svg>
+      </button>
+    </div>
+    <div class="hotkeys mono">Ctrl+Alt+R record &nbsp;·&nbsp; Ctrl+Alt+P pause</div>
+  </footer>
+
+  <div id="countdown" class="countdown" hidden>
+    <span id="countdown-num" class="mono">3</span>
+  </div>
+
+  <div id="toast" class="toast" hidden>
+    <span id="toast-msg"></span>
+    <button id="toast-action" class="ghost-btn" hidden>Open folder</button>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>
