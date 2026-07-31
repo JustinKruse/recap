@@ -64,6 +64,11 @@
         <span>Screenshot</span>
         <button id="btn-snap" class="ghost-btn" title="Capture a still (Ctrl+Alt+S)">Take still</button>
       </div>
+
+      <div class="row">
+        <span>Text grab</span>
+        <button id="btn-text" class="ghost-btn" title="Read text off the screen (Ctrl+Alt+T)">Grab text</button>
+      </div>
     </section>
 
     <section class="group">
@@ -111,6 +116,21 @@
 
   <div id="countdown" class="countdown" hidden>
     <span id="countdown-num" class="mono">3</span>
+  </div>
+
+  <div id="text-sheet" class="sheet" hidden>
+    <div class="sheet-panel">
+      <header class="sheet-head">
+        <span class="eyebrow">Grabbed text</span>
+        <span id="text-meta" class="mono muted"></span>
+      </header>
+      <textarea id="text-body" class="sheet-body mono" spellcheck="false"></textarea>
+      <footer class="sheet-foot">
+        <span class="muted">Already on your clipboard</span>
+        <button id="text-copy" class="ghost-btn">Copy again</button>
+        <button id="text-close" class="ghost-btn">Close</button>
+      </footer>
+    </div>
   </div>
 
   <div id="toast" class="toast" hidden>

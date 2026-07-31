@@ -29,6 +29,12 @@ const els = {
   outDir: $("out-dir"),
   outDirBtn: $("btn-out-dir"),
   snap: $("btn-snap"),
+  text: $("btn-text"),
+  textSheet: $("text-sheet"),
+  textBody: $("text-body"),
+  textMeta: $("text-meta"),
+  textCopy: $("text-copy"),
+  textClose: $("text-close"),
   record: $("btn-record"),
   pause: $("btn-pause"),
   stop: $("btn-stop"),
@@ -276,6 +282,59 @@ els.snap.addEventListener("click", async () => {
     await win.setFocus().catch(() => {});
   }
 });
+
+// ---- text grab ---------------------------------------------------------------
+
+function showGrabbedText(result) {
+  const lines = result?.lines?.length ?? 0;
+  if (!lines) {
+    toast("No text found in that area.", "error");
+    return;
+  }
+  // Vision reports a 0..1 score per line; the weakest one is what to distrust.
+  const worst = Math.min(...result.lines.map((l) => l.confidence));
+  els.textBody.value = result.text;
+  els.textMeta.textContent = `${lines} line${lines === 1 ? "" : "s"} · ${Math.round(worst * 100)}% min confidence`;
+  els.textSheet.hidden = false;
+  els.textBody.focus();
+  els.textBody.setSelectionRange(0, 0);
+}
+
+els.text.addEventListener("click", async () => {
+  if (mode === "region" && !regionSet) {
+    toast("Select a region first.", "error");
+    return;
+  }
+  const win = tauri.window.getCurrentWindow();
+  els.text.disabled = true;
+  await win.hide().catch(() => {});
+  try {
+    showGrabbedText(await invoke("grab_text", { cfg: currentConfig() }));
+  } catch (e) {
+    toast(String(e), "error");
+  } finally {
+    els.text.disabled = false;
+    await win.show().catch(() => {});
+    await win.setFocus().catch(() => {});
+  }
+});
+
+els.textClose.addEventListener("click", () => (els.textSheet.hidden = true));
+els.textCopy.addEventListener("click", async () => {
+  try {
+    await tauri.clipboardManager.writeText(els.textBody.value);
+    toast("Copied");
+  } catch {
+    // Fall back to the browser clipboard if the plugin isn't reachable.
+    try { await navigator.clipboard.writeText(els.textBody.value); toast("Copied"); }
+    catch (e) { toast(String(e), "error"); }
+  }
+});
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !els.textSheet.hidden) els.textSheet.hidden = true;
+});
+
+listen("text-grabbed", ({ payload }) => showGrabbedText(payload));
 
 els.record.addEventListener("click", () => {
   if (uiState === "idle") {

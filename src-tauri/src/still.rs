@@ -23,9 +23,30 @@ const MIN_PLAUSIBLE_PNG: u64 = 512;
 /// can hang rather than fail. `screencapture` is fast, so this is generous.
 const STILL_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Capture to the user's output folder, named by timestamp.
 pub fn capture(app: &AppHandle) -> Result<PathBuf, String> {
+    let output_dir = {
+        let handle = app.state::<RecorderHandle>();
+        let r = handle.0.lock().unwrap();
+        r.config.output_dir.clone()
+    };
+    if output_dir.is_empty() {
+        return Err("Choose an output folder first.".into());
+    }
+    let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    capture_into(app, PathBuf::from(output_dir).join(format!("Recap_{stamp}.png")))
+}
+
+/// Capture to a scratch file. Text grab wants pixels to read, not a saved
+/// screenshot, so this deliberately keeps the user's output folder clean.
+pub fn capture_temp(app: &AppHandle) -> Result<PathBuf, String> {
+    let stamp = chrono::Local::now().format("%Y%m%d%H%M%S%3f").to_string();
+    capture_into(app, std::env::temp_dir().join(format!("recap-ocr-{stamp}.png")))
+}
+
+fn capture_into(app: &AppHandle, final_path: PathBuf) -> Result<PathBuf, String> {
     let handle = app.state::<RecorderHandle>();
-    let (ff, output_dir, region, display_index) = {
+    let (ff, region, display_index) = {
         let r = handle.0.lock().unwrap();
         let region = if r.config.mode == "region" {
             r.region
@@ -36,25 +57,24 @@ pub fn capture(app: &AppHandle) -> Result<PathBuf, String> {
         let display_index = region
             .map(|x| x.monitor_index)
             .unwrap_or(r.config.monitor_index);
-        (
-            r.ffmpeg_path.clone(),
-            r.config.output_dir.clone(),
-            region,
-            display_index,
-        )
+        (r.ffmpeg_path.clone(), region, display_index)
     };
-    if output_dir.is_empty() {
-        return Err("Choose an output folder first.".into());
-    }
-    std::fs::create_dir_all(&output_dir).map_err(|e| format!("cannot create output folder: {e}"))?;
+    let dir = final_path
+        .parent()
+        .ok_or("output path has no folder")?
+        .to_path_buf();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create output folder: {e}"))?;
 
     let backend = capture::active();
-    let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-    let final_path = PathBuf::from(&output_dir).join(format!("Recap_{stamp}.png"));
 
-    // Cropping needs somewhere to put the uncropped grab first.
+    // Cropping needs somewhere to put the uncropped grab first. Sits beside the
+    // destination so the crop never has to cross a filesystem boundary.
     let raw_path = if region.is_some() {
-        PathBuf::from(&output_dir).join(format!(".recap-raw-{stamp}.png"))
+        let stem = final_path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "shot".into());
+        dir.join(format!(".recap-raw-{stem}.png"))
     } else {
         final_path.clone()
     };

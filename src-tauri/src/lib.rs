@@ -1,6 +1,7 @@
 mod capture;
 mod editor;
 mod ffmpeg;
+mod ocr;
 mod recorder;
 mod still;
 
@@ -200,6 +201,40 @@ async fn capture_still(app: tauri::AppHandle, cfg: RecordingConfig) -> Result<St
     still::capture(&app).map(|p| p.display().to_string())
 }
 
+/// Capture the current target and read the text out of it. The screenshot is a
+/// means to an end here, so it goes to a scratch file and is deleted after —
+/// the user asked for text, not another PNG in their folder.
+#[tauri::command]
+async fn grab_text(app: tauri::AppHandle, cfg: RecordingConfig) -> Result<ocr::OcrResult, String> {
+    {
+        let state = app.state::<RecorderHandle>();
+        let mut r = state.0.lock().unwrap();
+        if cfg.mode != "region" {
+            r.region = None;
+        }
+        r.config = cfg;
+    }
+    read_screen_text(&app)
+}
+
+/// Shared by the button and the hotkey. The screenshot is a means to an end, so
+/// it goes to a scratch file and is deleted after — the user asked for text,
+/// not another PNG in their folder.
+fn read_screen_text(app: &tauri::AppHandle) -> Result<ocr::OcrResult, String> {
+    let shot = still::capture_temp(app)?;
+    let result = ocr::recognize(&shot);
+    let _ = std::fs::remove_file(&shot);
+    let result = result?;
+
+    // Text on the clipboard is the whole point of a text grab; putting it there
+    // unasked saves the one step everyone would take next.
+    if !result.text.is_empty() {
+        use tauri_plugin_clipboard_manager::ClipboardExt;
+        let _ = app.clipboard().write_text(result.text.clone());
+    }
+    Ok(result)
+}
+
 #[tauri::command]
 fn toggle_pause(app: tauri::AppHandle) -> Result<(), String> {
     recorder::toggle_pause(&app)
@@ -259,6 +294,42 @@ fn hotkey_snap(app: &tauri::AppHandle) {
     });
 }
 
+/// Ctrl+Alt+T. Same off-thread reasoning as `hotkey_snap`.
+fn hotkey_grab_text(app: &tauri::AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let main = app.get_webview_window("main");
+        let was_visible = main
+            .as_ref()
+            .map(|w| w.is_visible().unwrap_or(false))
+            .unwrap_or(false);
+        if was_visible {
+            if let Some(w) = &main {
+                let _ = w.hide();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(220));
+        }
+        let result = read_screen_text(&app);
+        if was_visible {
+            if let Some(w) = &main {
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }
+        match result {
+            Ok(r) => {
+                let _ = app.emit("text-grabbed", &r);
+            }
+            Err(message) => {
+                let _ = app.emit(
+                    "recording-error",
+                    serde_json::json!({ "message": message, "log": "" }),
+                );
+            }
+        }
+    });
+}
+
 // ---------------------------------------------------------------------------
 // App
 
@@ -274,6 +345,7 @@ pub fn run() {
             pick_output_dir,
             open_region_overlay,
             capture_still,
+            grab_text,
             editor::open_editor,
             editor::load_image,
             editor::save_image,
@@ -301,8 +373,13 @@ pub fn run() {
             let sc_record = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyR);
             let sc_pause = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyP);
             let sc_snap = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyS);
-            let (h_record, h_pause, h_snap) =
-                (sc_record.clone(), sc_pause.clone(), sc_snap.clone());
+            let sc_text = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyT);
+            let (h_record, h_pause, h_snap, h_text) = (
+                sc_record.clone(),
+                sc_pause.clone(),
+                sc_snap.clone(),
+                sc_text.clone(),
+            );
             app.handle().plugin(
                 tauri_plugin_global_shortcut::Builder::new()
                     .with_handler(move |app, shortcut, event| {
@@ -315,6 +392,8 @@ pub fn run() {
                             recorder::hotkey_pause(app);
                         } else if *shortcut == h_snap {
                             hotkey_snap(app);
+                        } else if *shortcut == h_text {
+                            hotkey_grab_text(app);
                         }
                     })
                     .build(),
@@ -322,6 +401,7 @@ pub fn run() {
             app.global_shortcut().register(sc_record)?;
             app.global_shortcut().register(sc_pause)?;
             app.global_shortcut().register(sc_snap)?;
+            app.global_shortcut().register(sc_text)?;
 
             // ---- tray ------------------------------------------------------
             let show = MenuItem::with_id(app, "show", "Show Recap", true, None::<&str>)?;

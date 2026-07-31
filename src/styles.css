@@ -323,3 +323,58 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 
 /* settings lock while busy */
 body:not([data-state="idle"]) .deck { opacity: 0.55; pointer-events: none; }
+
+/* ---- text-grab sheet ------------------------------------------------------
+   Modal over the whole deck: the grabbed text is the only thing that matters
+   until it's dealt with, and it's usually longer than a toast can carry. */
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(8, 9, 12, 0.72);
+}
+
+.sheet-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.sheet-head,
+.sheet-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.sheet-head { border-bottom: 1px solid var(--border); }
+.sheet-foot { border-top: 1px solid var(--border); }
+.sheet-head #text-meta { margin-left: auto; }
+.sheet-foot .ghost-btn:last-child { margin-left: 0; }
+.sheet-foot span { margin-right: auto; font-size: 12px; }
+
+.sheet-body {
+  flex: 1;
+  min-height: 180px;
+  padding: 10px 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 0;
+  outline: none;
+  resize: none;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
+  -webkit-user-select: text;
+  user-select: text;
+}
