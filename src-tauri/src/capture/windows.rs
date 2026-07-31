@@ -12,7 +12,7 @@
 use super::{base_args, AudioDevice, CaptureBackend, CaptureTarget, ScreenDevice};
 use crate::ffmpeg::quiet_command;
 use crate::recorder::RecordingConfig;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub struct Windows;
 
@@ -86,6 +86,33 @@ impl CaptureBackend for Windows {
             return Vec::new();
         };
         parse_dshow_audio(&String::from_utf8_lossy(&output.stderr))
+    }
+
+    /// ddagrab grabs onto the GPU, so a still needs an explicit `hwdownload`
+    /// before the PNG encoder can touch it. `output_idx` is the monitor
+    /// position, which is exactly what `display_index` already is.
+    fn still_command(
+        &self,
+        ff: &Path,
+        display_index: usize,
+        out: &Path,
+    ) -> (PathBuf, Vec<String>) {
+        let args = vec![
+            "-hide_banner".into(),
+            "-loglevel".into(),
+            "warning".into(),
+            "-y".into(),
+            "-f".into(),
+            "lavfi".into(),
+            "-i".into(),
+            format!("ddagrab=output_idx={display_index}:framerate=1"),
+            "-vf".into(),
+            "hwdownload,format=bgra".into(),
+            "-frames:v".into(),
+            "1".into(),
+            out.display().to_string(),
+        ];
+        (ff.to_path_buf(), args)
     }
 
     fn segment_args(

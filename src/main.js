@@ -28,6 +28,7 @@ const els = {
   micDev: $("sel-mic"),
   outDir: $("out-dir"),
   outDirBtn: $("btn-out-dir"),
+  snap: $("btn-snap"),
   record: $("btn-record"),
   pause: $("btn-pause"),
   stop: $("btn-stop"),
@@ -248,6 +249,32 @@ els.outDirBtn.addEventListener("click", async () => {
   }
 });
 
+els.snap.addEventListener("click", async () => {
+  if (mode === "region" && !regionSet) {
+    toast("Select a region first.", "error");
+    return;
+  }
+  // Get out of our own shot. Rust waits ~220 ms after this for the compositor
+  // to actually repaint the area the window was covering.
+  const win = tauri.window.getCurrentWindow();
+  els.snap.disabled = true;
+  await win.hide().catch(() => {});
+  try {
+    const path = await invoke("capture_still", { cfg: currentConfig() });
+    const name = path.split(/[\\/]/).pop();
+    toast(`Saved ${name}`, "ok", {
+      label: "Open folder",
+      onClick: () => invoke("reveal_path", { path }).catch(() => {}),
+    });
+  } catch (e) {
+    toast(String(e), "error");
+  } finally {
+    els.snap.disabled = false;
+    await win.show().catch(() => {});
+    await win.setFocus().catch(() => {});
+  }
+});
+
 els.record.addEventListener("click", () => {
   if (uiState === "idle") {
     if (mode === "region" && !regionSet) {
@@ -314,6 +341,16 @@ listen("recording-error", ({ payload }) => {
   const msg = payload?.message ?? "Recording failed.";
   const log = payload?.log ? ` — ${String(payload.log).split("\n").slice(-2).join(" ")}` : "";
   toast(`${msg}${log}`, "error");
+});
+
+// Ctrl+Alt+S fires in Rust, so the toast has to come back over an event.
+listen("still-captured", ({ payload }) => {
+  const path = payload?.path ?? "";
+  const name = path.split(/[\\/]/).pop();
+  toast(`Saved ${name}`, "ok", {
+    label: "Open folder",
+    onClick: () => invoke("reveal_path", { path }).catch(() => {}),
+  });
 });
 
 listen("region-set", ({ payload }) => {

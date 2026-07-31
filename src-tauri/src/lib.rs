@@ -1,6 +1,7 @@
 mod capture;
 mod ffmpeg;
 mod recorder;
+mod still;
 
 use capture::AudioDevice;
 use recorder::{RecorderHandle, RecordingConfig};
@@ -8,7 +9,7 @@ use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Listener, Manager, WebviewUrl, WebviewWindowBuilder,
+    Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
@@ -180,6 +181,24 @@ fn start_recording(app: tauri::AppHandle, cfg: RecordingConfig) -> Result<(), St
     recorder::start(&app)
 }
 
+/// Grab a still of the current target. Runs off the UI thread because
+/// `screencapture`/ffmpeg take a moment and blocking here freezes the window.
+#[tauri::command]
+async fn capture_still(app: tauri::AppHandle, cfg: RecordingConfig) -> Result<String, String> {
+    {
+        let state = app.state::<RecorderHandle>();
+        let mut r = state.0.lock().unwrap();
+        if cfg.mode != "region" {
+            r.region = None;
+        }
+        r.config = cfg;
+    }
+    // Give the compositor a beat to finish hiding our own window before we
+    // photograph the screen it was just covering.
+    std::thread::sleep(std::time::Duration::from_millis(220));
+    still::capture(&app).map(|p| p.display().to_string())
+}
+
 #[tauri::command]
 fn toggle_pause(app: tauri::AppHandle) -> Result<(), String> {
     recorder::toggle_pause(&app)
@@ -199,6 +218,46 @@ fn reveal_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Ctrl+Alt+S. Runs off the hotkey thread — the capture blocks, and stalling
+/// the shortcut handler would wedge every other hotkey with it. Uses whatever
+/// config the UI last pushed, so it works with the window hidden.
+fn hotkey_snap(app: &tauri::AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let main = app.get_webview_window("main");
+        let was_visible = main
+            .as_ref()
+            .map(|w| w.is_visible().unwrap_or(false))
+            .unwrap_or(false);
+        if was_visible {
+            if let Some(w) = &main {
+                let _ = w.hide();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(220));
+        }
+        let result = still::capture(&app);
+        if was_visible {
+            if let Some(w) = &main {
+                let _ = w.show();
+            }
+        }
+        match result {
+            Ok(path) => {
+                let _ = app.emit(
+                    "still-captured",
+                    serde_json::json!({ "path": path.display().to_string() }),
+                );
+            }
+            Err(message) => {
+                let _ = app.emit(
+                    "recording-error",
+                    serde_json::json!({ "message": message, "log": "" }),
+                );
+            }
+        }
+    });
+}
+
 // ---------------------------------------------------------------------------
 // App
 
@@ -212,6 +271,7 @@ pub fn run() {
             sync_config,
             pick_output_dir,
             open_region_overlay,
+            capture_still,
             start_recording,
             toggle_pause,
             stop_recording,
@@ -233,7 +293,9 @@ pub fn run() {
             // ---- global hotkeys -------------------------------------------
             let sc_record = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyR);
             let sc_pause = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyP);
-            let (h_record, h_pause) = (sc_record.clone(), sc_pause.clone());
+            let sc_snap = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyS);
+            let (h_record, h_pause, h_snap) =
+                (sc_record.clone(), sc_pause.clone(), sc_snap.clone());
             app.handle().plugin(
                 tauri_plugin_global_shortcut::Builder::new()
                     .with_handler(move |app, shortcut, event| {
@@ -244,12 +306,15 @@ pub fn run() {
                             recorder::toggle_record(app);
                         } else if *shortcut == h_pause {
                             recorder::hotkey_pause(app);
+                        } else if *shortcut == h_snap {
+                            hotkey_snap(app);
                         }
                     })
                     .build(),
             )?;
             app.global_shortcut().register(sc_record)?;
             app.global_shortcut().register(sc_pause)?;
+            app.global_shortcut().register(sc_snap)?;
 
             // ---- tray ------------------------------------------------------
             let show = MenuItem::with_id(app, "show", "Show Recap", true, None::<&str>)?;

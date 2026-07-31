@@ -11,7 +11,7 @@
 
 use crate::recorder::{RecordingConfig, Region};
 use serde::Serialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 // Whichever backend isn't active is still compiled — that's what keeps its
 // arg building unit-testable from the other platform — so nothing constructs
@@ -72,6 +72,20 @@ pub trait CaptureBackend: Send + Sync {
 
     /// Enumerate audio capture inputs.
     fn audio_devices(&self, ff: &Path) -> Vec<AudioDevice>;
+
+    /// Command that grabs one full-screen frame of `display_index` to `out`
+    /// as PNG. `display_index` is a 0-based position in the UI's monitor list,
+    /// *not* a `ScreenDevice::id` — the two differ on macOS, where the video
+    /// device index also counts cameras.
+    ///
+    /// Returns a program plus args rather than an arg vector, because this
+    /// isn't necessarily ffmpeg: macOS delegates to Apple's `screencapture`.
+    /// Always captures the whole display — cropping to a region happens
+    /// afterwards in `still`, so region geometry stays in the one coordinate
+    /// space (monitor-relative physical pixels) that the overlay, the
+    /// recorder, and this all agree on.
+    fn still_command(&self, ff: &Path, display_index: usize, out: &Path)
+        -> (PathBuf, Vec<String>);
 
     /// Build the full ffmpeg argument vector for one recording segment.
     /// `encoder` is already resolved — never "auto".

@@ -14,7 +14,7 @@
 use super::{base_args, AudioDevice, CaptureBackend, CaptureTarget, ScreenDevice};
 use crate::ffmpeg::quiet_command;
 use crate::recorder::RecordingConfig;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub struct MacOs;
 
@@ -117,6 +117,28 @@ impl CaptureBackend for MacOs {
 
     fn audio_devices(&self, ff: &Path) -> Vec<AudioDevice> {
         parse_avfoundation_devices(&list_devices_stderr(ff)).1
+    }
+
+    /// Apple's own capture tool, not ffmpeg. It's already signed and
+    /// TCC-blessed, it's Retina-correct without any scaling maths, and it
+    /// returns in milliseconds where spinning up an AVFoundation session for a
+    /// single frame takes seconds.
+    ///
+    /// `-D` is 1-based, hence the `+ 1`.
+    fn still_command(
+        &self,
+        _ff: &Path,
+        display_index: usize,
+        out: &Path,
+    ) -> (PathBuf, Vec<String>) {
+        let args = vec![
+            "-x".into(), // no shutter sound
+            "-C".into(), // include the cursor, matching the recorder's default
+            "-D".into(),
+            (display_index + 1).to_string(),
+            out.display().to_string(),
+        ];
+        (PathBuf::from("/usr/sbin/screencapture"), args)
     }
 
     fn segment_args(
