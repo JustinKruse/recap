@@ -7,6 +7,7 @@ mod editor;
 mod ffmpeg;
 mod ocr;
 mod recorder;
+mod scroll;
 mod settings;
 mod still;
 
@@ -227,6 +228,55 @@ pub(crate) fn read_screen_text(app: &tauri::AppHandle) -> Result<ocr::OcrResult,
     Ok(result)
 }
 
+/// Scroll-capture the selected region. Requires a region: there is nothing
+/// sensible to scroll about "the whole display", and the pointer has to sit
+/// over the scrollable area anyway.
+#[tauri::command]
+async fn capture_scrolling(app: tauri::AppHandle, cfg: RecordingConfig) -> Result<String, String> {
+    app.state::<RecorderHandle>().0.lock().unwrap().apply_config(cfg);
+    let (ff, region, display, output_dir) = {
+        let state = app.state::<RecorderHandle>();
+        let r = state.0.lock().unwrap();
+        let region = r.region.ok_or("Select a region over the scrollable area first.")?;
+        (
+            r.ffmpeg_path.clone(),
+            region,
+            region.monitor_index,
+            r.config.output_dir.clone(),
+        )
+    };
+    // Out of our own shot, and give the compositor time to repaint.
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+    std::thread::sleep(std::time::Duration::from_millis(320));
+
+    let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let out = PathBuf::from(&output_dir).join(format!("Recap_scroll_{stamp}.png"));
+    let opts = scroll::ScrollOptions {
+        display,
+        region: (region.x, region.y, region.width, region.height),
+        ..Default::default()
+    };
+    let result = scroll::capture(ff.as_deref(), &opts, &out);
+
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+    let r = result?;
+    if !r.reached_end {
+        let _ = app.emit(
+            "recording-error",
+            serde_json::json!({
+                "message": format!("Stopped after {} frames — the page may be longer than that.", r.frames),
+                "log": ""
+            }),
+        );
+    }
+    Ok(r.path.display().to_string())
+}
+
 #[tauri::command]
 fn toggle_pause(app: tauri::AppHandle) -> Result<(), String> {
     recorder::toggle_pause(&app)
@@ -364,6 +414,7 @@ pub fn run() {
             open_region_overlay,
             capture_still,
             grab_text,
+            capture_scrolling,
             editor::open_editor,
             editor::load_image,
             editor::save_image,

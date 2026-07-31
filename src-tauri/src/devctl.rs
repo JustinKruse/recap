@@ -195,9 +195,12 @@ fn eval(app: &AppHandle, label: &str, js: &str) -> Value {
   let out;
   try {{
     const src = {src};
+    // AsyncFunction rather than Function: statement bodies routinely want
+    // `await`, which a plain Function rejects as a syntax error.
+    const AsyncFunction = Object.getPrototypeOf(async function () {{}}).constructor;
     let fn;
-    try {{ fn = new Function("return (" + src + "\n)"); }}
-    catch (_) {{ fn = new Function(src); }}
+    try {{ fn = new AsyncFunction("return (" + src + "\n)"); }}
+    catch (_) {{ fn = new AsyncFunction(src); }}
     const v = await fn();
     out = {{ ok: v === undefined ? null : JSON.parse(JSON.stringify(v)) }};
   }} catch (e) {{ out = {{ error: String(e) }}; }}

@@ -30,6 +30,7 @@ const els = {
   outDirBtn: $("btn-out-dir"),
   snap: $("btn-snap"),
   text: $("btn-text"),
+  scroll: $("btn-scroll"),
   textSheet: $("text-sheet"),
   textBody: $("text-body"),
   textMeta: $("text-meta"),
@@ -336,6 +337,27 @@ els.text.addEventListener("click", async () => {
     els.text.disabled = false;
     await win.show().catch(() => {});
     await win.setFocus().catch(() => {});
+  }
+});
+
+els.scroll.addEventListener("click", async () => {
+  if (mode !== "region" || !regionSet) {
+    toast("Scroll capture needs a region over the scrollable area.", "error");
+    return;
+  }
+  els.scroll.disabled = true;
+  toast("Scrolling… don't touch the mouse.", "ok");
+  try {
+    const path = await invoke("capture_scrolling", { cfg: currentConfig() });
+    await invoke("open_editor", { path }).catch(() => {});
+    toast(`Saved ${path.split(/[\\/]/).pop()}`, "ok", {
+      label: "Open folder",
+      onClick: () => invoke("reveal_path", { path }).catch(() => {}),
+    });
+  } catch (e) {
+    toast(String(e), "error");
+  } finally {
+    els.scroll.disabled = false;
   }
 });
 

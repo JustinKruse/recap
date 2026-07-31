@@ -14,6 +14,10 @@ recap — screen capture, annotation and text grab
   recap shot [--display N] [--region X,Y,W,H] <out.png>
         Save a screenshot. Region is in physical pixels, relative to the display.
 
+  recap scroll --region X,Y,W,H [--step N] [--max N] <out.png>
+        Scroll-capture a region: grab, scroll, repeat, stitch into one tall
+        image. Put the pointer over the scrollable area first.
+
   recap ocr [--display N] [--region X,Y,W,H] [--json] [image.png]
         Read text off the screen, or out of an image if one is given.
         Prints plain text; --json adds per-line boxes and confidence.
@@ -29,6 +33,7 @@ pub fn maybe_run() -> bool {
     let verb = match args.first().map(String::as_str) {
         Some("shot") => "shot",
         Some("ocr") => "ocr",
+        Some("scroll") => "scroll",
         Some("--help") | Some("-h") | Some("help") => {
             print!("{USAGE}");
             return true;
@@ -53,6 +58,8 @@ pub fn maybe_run() -> bool {
 
 struct Opts {
     display: usize,
+    step: u32,
+    max_frames: usize,
     region: Option<(u32, u32, u32, u32)>,
     json: bool,
     positional: Vec<String>,
@@ -61,6 +68,8 @@ struct Opts {
 fn parse(args: &[String]) -> Result<Opts, String> {
     let mut o = Opts {
         display: 0,
+        step: 0,
+        max_frames: 40,
         region: None,
         json: false,
         positional: Vec::new(),
@@ -89,6 +98,20 @@ fn parse(args: &[String]) -> Result<Opts, String> {
                 }
                 o.region = Some(capture::sanitize_region(x as i32, y as i32, w as u32, h as u32));
             }
+            "--step" => {
+                o.step = it
+                    .next()
+                    .ok_or("--step needs a number")?
+                    .parse()
+                    .map_err(|_| "--step needs a number")?;
+            }
+            "--max" => {
+                o.max_frames = it
+                    .next()
+                    .ok_or("--max needs a number")?
+                    .parse()
+                    .map_err(|_| "--max needs a number")?;
+            }
             "--json" => o.json = true,
             other if other.starts_with('-') => return Err(format!("unknown flag `{other}`")),
             other => o.positional.push(other.to_string()),
@@ -107,6 +130,29 @@ fn run(verb: &str, args: &[String]) -> Result<String, String> {
                 .ok_or("shot needs an output path\n\n".to_string() + USAGE)?;
             let path = capture_to(&o, Path::new(out))?;
             Ok(format!("{}\n", path.display()))
+        }
+        "scroll" => {
+            let out = o
+                .positional
+                .first()
+                .ok_or("scroll needs an output path\n\n".to_string() + USAGE)?;
+            let region = o.region.ok_or("scroll needs --region X,Y,W,H")?;
+            let opts = crate::scroll::ScrollOptions {
+                display: o.display,
+                region,
+                step: o.step,
+                max_frames: o.max_frames.clamp(2, 200),
+                ..Default::default()
+            };
+            let r = crate::scroll::capture(ffmpeg::locate().as_deref(), &opts, Path::new(out))?;
+            Ok(format!(
+                "{}\n{} frames, {}x{}{}\n",
+                r.path.display(),
+                r.frames,
+                r.width,
+                r.height,
+                if r.reached_end { "" } else { " (stopped at --max, may be incomplete)" }
+            ))
         }
         "ocr" => {
             // An explicit image is read as-is; otherwise grab the screen first.
