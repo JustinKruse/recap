@@ -2,7 +2,7 @@
 
 A minimal Snagit-style screen recorder for **macOS and Windows**. Tauri 2 shell (Rust) driving ffmpeg's platform-native capture — no capture engine of our own, just clean process management around ones that already work.
 
-**Features:** full-screen or drag-to-select region capture, still screenshots, an annotation editor, OCR text grab, mic audio, pause/resume, 3-2-1 countdown, tray icon, global hotkeys (`Ctrl+Alt+R` record/stop, `Ctrl+Alt+P` pause, `Ctrl+Alt+S` still, `Ctrl+Alt+T` text grab), hardware encoding with automatic software fallback.
+**Features:** full-screen or drag-to-select region capture, still screenshots, an annotation editor with selection and zoom, OCR text grab, GIF export, persisted settings, a headless CLI, mic audio, pause/resume, 3-2-1 countdown, tray icon, global hotkeys (`Ctrl+Alt+R` record/stop, `Ctrl+Alt+P` pause, `Ctrl+Alt+S` still, `Ctrl+Alt+T` text grab), hardware encoding with automatic software fallback.
 
 ## How capture works per platform
 
@@ -70,9 +70,25 @@ recapctl shot editor /tmp/ed.png            # screenshot cropped to that window
 recapctl shot screen /tmp/full.png
 ```
 
+`eval` takes an expression *or* statements (end with `return x` for a value), and
+reports syntax errors rather than hanging. It runs in the page's global scope, so
+`editor.js` top-level bindings (`shapes`, `selected`, `zoom`) are reachable.
+
 `shot` reads the window's own reported bounds and crops a real `screencapture`, so it shows what is actually composited rather than a webview's idea of itself.
 
 > **This is a remote-code-execution hole by design** — `eval` runs arbitrary JS in a privileged webview. It is compiled only under `debug_assertions` and bound to loopback, so it does not exist in a release build. Do not lift that gate.
+
+## Headless CLI
+
+The same binary runs without a GUI, for scripts, CI and coding agents:
+
+```
+recap shot [--display N] [--region X,Y,W,H] out.png
+recap ocr  [--display N] [--region X,Y,W,H] [--json] [image.png]
+```
+
+`recap ocr` with no image grabs the screen, reads it, prints the text, and
+deletes the scratch file.
 
 ## Layout
 
@@ -90,6 +106,8 @@ src-tauri/src/
   editor.rs              annotation editor plumbing: load/save/copy, window
   ocr.rs                 text grab: Vision on macOS, reading-order sort
   devctl.rs              debug-only control socket (never in release builds)
+  cli.rs                 headless `recap shot` / `recap ocr`
+  settings.rs            persisted config, debounced
   capture/
     mod.rs               CaptureBackend trait, shared helpers, backend selection
     macos.rs             avfoundation + VideoToolbox
@@ -98,7 +116,7 @@ src-tauri/src/
 
 - **Encoders** are probed at startup with a real 3-frame test encode (`-encoders` lies — it lists NVENC even without an NVIDIA GPU).
 - **Pause** stops the current ffmpeg segment gracefully (writes `q` to stdin; kill only after a 4 s timeout, since a hard kill truncates the MP4). Resume starts `seg_001.mp4`, `seg_002.mp4`, … Stop losslessly concatenates segments with the concat demuxer.
-- **Annotation editor** opens automatically after a still. Tools: arrow, box, ellipse, line, highlight, blur/redact, text, step numbers — keys `A B E L H X T S`. `Cmd/Ctrl+Z` undo, `+Shift` redo, `Cmd/Ctrl+S` save, `+Shift` save-as, `Cmd/Ctrl+C` copy. **Save overwrites the file it opened**; use Save as… to keep the untouched capture.
+- **Annotation editor** opens automatically after a still. Tools: select, arrow, box, ellipse, line, highlight, blur/redact, text, step numbers — keys `V A B E L H X T S`. Select (`V`) picks the topmost shape under the cursor; drag moves it, `Delete` removes it, and a colour or stroke change restyles it. Zoom with `Cmd/Ctrl+0/+/-`. `Cmd/Ctrl+Z` undo, `+Shift` redo, `Cmd/Ctrl+S` save, `+Shift` save-as, `Cmd/Ctrl+C` copy. **Save overwrites the file it opened**; use Save as… to keep the untouched capture.
 - Shapes are stored as objects and the canvas is redrawn from the pristine bitmap each change, so undo is free and blur is non-destructive — a redaction samples the source image, never the canvas, so blurs never compound.
 - **Text grab** (`Ctrl+Alt+T`) captures the current target, reads it with Vision, copies the text to the clipboard and shows it in an editable sheet. The screenshot is scratch and gets deleted — a text grab shouldn't leave PNGs behind. Vision returns observations unordered with a bottom-left origin; boxes are flipped to top-left and lines sorted into reading order with a row-overlap tolerance so side-by-side columns don't interleave.
 - Closing the window hides to the tray; recording keeps running. Quit from the tray.
@@ -109,15 +127,14 @@ src-tauri/src/
 - **Still capture hides the main window and waits 220 ms** before grabbing. That delay is a guess at compositor repaint time, not a measured value; if Recap shows up in its own screenshot, raise it.
 - **OCR accuracy drops on small text.** Reading a whole 3440×1440 screen, Vision returned `Snacit` for *Snagit*, `clioboard` for *clipboard* and `10.65 GE` for *10.65 GB* — UI text at that scale is near its limit. Region grabs of larger text are markedly better. Upscaling the scratch PNG ~2× before recognition is the obvious next lever, but it hasn't been measured, so it isn't in yet.
 - **OCR is macOS-only.** Windows returns an explicit error; `Windows.Media.Ocr` needs a language pack and a WinRT binding that aren't wired up.
-- **The editor draws but cannot re-select.** Shapes commit on release and can only be removed by undo — there's no click-to-move, resize or restyle after the fact.
-- **The editor has no zoom or fit control.** The canvas renders at natural size scaled to the window width, so a tall screenshot scrolls vertically.
+- **Shapes can be moved but not resized.** Selection supports move, restyle and delete; there are no resize handles yet.
+- **Scrolling capture is not implemented.** It's the one Snagit pillar still missing.
 - **The whole UI layer is verified only in a headless browser** against a stubbed IPC bridge. The editor's renderers, pointer handling and undo/redo are covered; the actual Tauri commands behind Save, Save as… and Copy have never run.
 - **Transparency requires Tauri's `macos-private-api`** feature, so the app cannot ship on the Mac App Store. Direct notarized distribution is unaffected.
 - **Monitor mapping**: on macOS, screens are enumerated from AVFoundation and matched to Tauri's monitor list by position in that list. Multi-display setups where the two orders disagree will target the wrong screen. macOS multi-display is untested — only one display was available.
 - **No system audio** — mic only. Neither Desktop Duplication nor AVFoundation screen capture carries audio; app audio needs a loopback device (VB-Cable / BlackHole) or native code later.
 - A/V sync on long mic recordings is untuned (no `aresample` correction yet).
-- Settings aren't persisted between launches yet.
 
 ## Roadmap
 
-Three pillars are done: recording, still capture + annotation editor, and OCR. **Scrolling capture** is the one left, plus: GIF export (`palettegen`/`paletteuse`) · webcam picture-in-picture · system audio · click highlighting · trim-before-save · settings persistence (`tauri-plugin-store`) · configurable hotkeys.
+Three pillars are done: recording, still capture + annotation editor, and OCR. **Scrolling capture** is the one left, plus: webcam picture-in-picture · system audio · click highlighting · trim-before-save · configurable hotkeys.

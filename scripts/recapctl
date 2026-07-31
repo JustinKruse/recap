@@ -105,7 +105,14 @@ def main(argv):
     elif cmd == "eval":
         if len(rest) < 2:
             die("usage: recapctl eval <window> <js>")
-        emit(request({"cmd": "eval", "window": rest[0], "js": " ".join(rest[1:])}))
+        payload = {"cmd": "eval", "window": rest[0], "js": " ".join(rest[1:])}
+        # A backgrounded WKWebView can be throttled hard enough to miss the
+        # first request after an idle spell. One retry turns that from a
+        # confusing failure into a slightly slow success.
+        r = request(payload, timeout=30.0)
+        if isinstance(r, dict) and "timed out" in str(r.get("error", "")):
+            r = request(payload, timeout=30.0)
+        emit(r)
     elif cmd == "invoke":
         if not rest:
             die("usage: recapctl invoke <still|grab_text|record_start|record_stop|pause>")

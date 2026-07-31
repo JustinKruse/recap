@@ -237,6 +237,27 @@ fn stop_recording(app: tauri::AppHandle) -> Result<(), String> {
     recorder::stop(&app)
 }
 
+/// Turn a finished recording into a GIF beside it. Width and fps are dropped
+/// from the source deliberately: a full-resolution 30fps GIF of a 3440px screen
+/// is tens of megabytes and useless for sharing, which is the only reason to
+/// want a GIF at all.
+#[tauri::command]
+async fn export_gif(app: tauri::AppHandle, path: String, fps: u32, width: u32) -> Result<String, String> {
+    let ff = {
+        let state = app.state::<RecorderHandle>();
+        let r = state.0.lock().unwrap();
+        r.ffmpeg_path.clone()
+    }
+    .ok_or_else(|| capture::active().ffmpeg_hint().to_string())?;
+    let src = PathBuf::from(&path);
+    if !src.is_file() {
+        return Err("that recording is no longer there".into());
+    }
+    let out = src.with_extension("gif");
+    ffmpeg::to_gif(&ff, &src, &out, fps, width)?;
+    Ok(out.display().to_string())
+}
+
 /// "Open folder" on the finished-recording toast: reveal the file in Explorer.
 #[tauri::command]
 fn reveal_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
@@ -351,7 +372,8 @@ pub fn run() {
             start_recording,
             toggle_pause,
             stop_recording,
-            reveal_path
+            reveal_path,
+            export_gif
         ])
         .setup(|app| {
             settings::init(app.handle());

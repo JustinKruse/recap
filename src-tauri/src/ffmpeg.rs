@@ -178,3 +178,41 @@ mod tests {
         assert_eq!(encoders, vec!["libx264".to_string()]);
     }
 }
+
+/// Convert a finished recording to a GIF.
+///
+/// Two passes on purpose: `palettegen` builds an optimal 256-colour table for
+/// this specific clip, then `paletteuse` maps to it. A single-pass GIF uses a
+/// generic web palette and looks visibly worse on screen recordings, which are
+/// mostly flat UI colour and gradients that band badly.
+pub fn to_gif(ff: &Path, src: &Path, out: &Path, fps: u32, width: u32) -> Result<(), String> {
+    let filters = format!(
+        "fps={},scale={}:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=3",
+        fps.clamp(1, 50),
+        width.max(16)
+    );
+    let output = quiet_command(ff)
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            &src.display().to_string(),
+            "-filter_complex",
+            &filters,
+            "-loop",
+            "0",
+            &out.display().to_string(),
+        ])
+        .output()
+        .map_err(|e| format!("could not start ffmpeg: {e}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&output.stderr);
+    Err(format!(
+        "GIF export failed: {}",
+        err.lines().rev().take(2).collect::<Vec<_>>().join(" ")
+    ))
+}

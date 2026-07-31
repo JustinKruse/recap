@@ -24,16 +24,44 @@ use crate::recorder;
 
 const ADDR: &str = "127.0.0.1:7333";
 
-/// How long to wait for a webview to answer an `eval` before giving up. A
-/// wedged webview must not wedge the socket thread with it.
-const EVAL_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long to wait for a webview to answer an `eval` before giving up.
+///
+/// Generous because WKWebView throttles a window that is hidden or fully
+/// occluded: the script runs, but the reply can be deferred for many seconds.
+/// A wedged webview still must not wedge the socket thread forever.
+const EVAL_TIMEOUT: Duration = Duration::from_secs(25);
 
 type Pending = Arc<Mutex<HashMap<u64, mpsc::Sender<Value>>>>;
 
 static PENDING: OnceLock<Pending> = OnceLock::new();
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Keep macOS from throttling us while an agent is driving the app.
+///
+/// A window that is fully covered by another app counts as occluded, and App
+/// Nap then throttles the webview's timers — so an `eval` runs but its reply
+/// can be deferred for tens of seconds. That made this socket flaky in exactly
+/// the situation it exists for: a terminal in front, Recap behind. The activity
+/// assertion is held for the life of the process and never taken in release,
+/// where this module doesn't exist at all.
+#[cfg(target_os = "macos")]
+fn disable_app_nap() {
+    use objc2_foundation::{NSActivityOptions, NSProcessInfo, NSString};
+    let token = NSProcessInfo::processInfo().beginActivityWithOptions_reason(
+        NSActivityOptions::UserInitiated,
+        &NSString::from_str("recap devctl is driving the UI"),
+    );
+    // The activity ends when this token is released, and it should last as long
+    // as the process does. The token isn't Send, so it can't live in a static —
+    // leaking the retain is the honest way to say "hold this forever".
+    std::mem::forget(token);
+}
+
+#[cfg(not(target_os = "macos"))]
+fn disable_app_nap() {}
+
 pub fn start(app: &AppHandle) {
+    disable_app_nap();
     let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
     if PENDING.set(pending.clone()).is_err() {
         return; // already started
@@ -153,14 +181,24 @@ fn eval(app: &AppHandle, label: &str, js: &str) -> Value {
     let (tx, rx) = mpsc::channel();
     pending.lock().unwrap().insert(id, tx);
 
-    // The expression is wrapped so a thrown error comes back as data rather
-    // than vanishing into the webview's console. The round trip through
-    // JSON.stringify also keeps non-serialisable values from hanging us.
+    // The source is passed as a *string* and compiled with `new Function`, so
+    // that a syntax error is a catchable exception rather than a script that
+    // fails to parse — which would run nothing, emit nothing, and leave the
+    // caller waiting out the timeout with no idea why.
+    //
+    // Expression first (`return (src)`) so `shapes.length` yields a value; if
+    // that doesn't parse, the source is compiled as a statement body, so
+    // `const x = 1; return x` works too.
+    let src = serde_json::to_string(js).unwrap_or_else(|_| "\"\"".into());
     let script = format!(
         r#"(async () => {{
   let out;
   try {{
-    const v = await (async () => ({js}))();
+    const src = {src};
+    let fn;
+    try {{ fn = new Function("return (" + src + "\n)"); }}
+    catch (_) {{ fn = new Function(src); }}
+    const v = await fn();
     out = {{ ok: v === undefined ? null : JSON.parse(JSON.stringify(v)) }};
   }} catch (e) {{ out = {{ error: String(e) }}; }}
   window.__TAURI__.event.emit('devctl-result', {{ id: {id}, value: out }});

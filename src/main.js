@@ -206,9 +206,28 @@ async function init() {
     });
   }
 
-  outputDir = info.defaultOutputDir;
+  // Mirror last run's settings onto the controls. Rust has already validated
+  // them (dead output folder, unplugged display), so this is what's active —
+  // showing anything else would be a lie about what the next capture will do.
+  const c = info.config ?? {};
+  outputDir = c.outputDir || info.defaultOutputDir;
   els.outDir.textContent = outputDir;
   els.outDir.title = outputDir;
+  if (c.fps) els.fps.value = String(c.fps);
+  if (c.encoder && [...els.encoder.options].some((o) => o.value === c.encoder)) {
+    els.encoder.value = c.encoder;
+  }
+  if (typeof c.captureCursor === "boolean") els.cursor.checked = c.captureCursor;
+  if (typeof c.micEnabled === "boolean") els.mic.checked = c.micEnabled;
+  els.micDev.disabled = !els.mic.checked;
+  if (c.micDevice && [...els.micDev.options].some((o) => o.value === c.micDevice)) {
+    els.micDev.value = c.micDevice;
+  }
+  if (Number.isInteger(c.monitorIndex) && els.monitor.options[c.monitorIndex]) {
+    els.monitor.value = String(c.monitorIndex);
+  }
+  // Region mode is deliberately not restored: the region itself isn't, so
+  // restoring the mode would leave the UI demanding a selection on every launch.
 
   syncConfig();
 }
@@ -384,9 +403,22 @@ listen("recording-stopped", ({ payload }) => {
   timerReset();
   const path = payload?.path ?? "";
   const name = path.split(/[\\/]/).pop();
+  // GIF is the action worth one click here — revealing the folder is a
+  // right-click away in any file manager, converting a video isn't.
   toast(`Saved ${name}`, "ok", {
-    label: "Open folder",
-    onClick: () => invoke("reveal_path", { path }).catch(() => {}),
+    label: "Make GIF",
+    onClick: async () => {
+      toast("Building GIF…", "ok");
+      try {
+        const gif = await invoke("export_gif", { path, fps: 12, width: 900 });
+        toast(`Saved ${gif.split(/[\\/]/).pop()}`, "ok", {
+          label: "Open folder",
+          onClick: () => invoke("reveal_path", { path: gif }).catch(() => {}),
+        });
+      } catch (e) {
+        toast(String(e), "error");
+      }
+    },
   });
 });
 
