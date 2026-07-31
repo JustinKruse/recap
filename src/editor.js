@@ -472,9 +472,26 @@ async function load(path) {
   render();
 }
 
-// Re-targeting an already-open editor at a fresh capture.
+// Re-targeting an already-open editor at a fresh capture. Loading replaces the
+// canvas outright, so unsaved marks would go with it — refuse and make the
+// discard explicit rather than quietly throwing away work.
 listen("editor-load", ({ payload }) => {
-  if (payload?.path) load(payload.path);
+  if (!payload?.path) return;
+  if (dirty && shapes.length) {
+    toast(
+      `${shapes.length} unsaved mark${shapes.length === 1 ? "" : "s"} on ${basename(imagePath)}.`,
+      "error",
+      {
+        label: "Discard & load new",
+        onClick: () => {
+          dirty = false;
+          load(payload.path);
+        },
+      }
+    );
+    return;
+  }
+  load(payload.path);
 });
 
 const params = new URLSearchParams(window.location.search);
