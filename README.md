@@ -61,11 +61,13 @@ cd src-tauri && cargo test
 src/                     vanilla HTML/CSS/JS, no Node needed (withGlobalTauri)
   index.html/main.js     main control window
   overlay.html/.js       transparent per-monitor overlay for region drag-select
+  editor.html/.js/.css   annotation editor (canvas)
 src-tauri/src/
   lib.rs                 commands, tray, global hotkeys, overlay window, events
   recorder.rs            state machine: Idle → Countdown → Recording ⇄ Paused → Finalizing
   ffmpeg.rs              OS-agnostic: locate binary, probe encoders, concat
   still.rs               screenshots: full-display grab, then crop to region
+  editor.rs              annotation editor plumbing: load/save/copy, window
   capture/
     mod.rs               CaptureBackend trait, shared helpers, backend selection
     macos.rs             avfoundation + VideoToolbox
@@ -74,12 +76,17 @@ src-tauri/src/
 
 - **Encoders** are probed at startup with a real 3-frame test encode (`-encoders` lies — it lists NVENC even without an NVIDIA GPU).
 - **Pause** stops the current ffmpeg segment gracefully (writes `q` to stdin; kill only after a 4 s timeout, since a hard kill truncates the MP4). Resume starts `seg_001.mp4`, `seg_002.mp4`, … Stop losslessly concatenates segments with the concat demuxer.
+- **Annotation editor** opens automatically after a still. Tools: arrow, box, ellipse, line, highlight, blur/redact, text, step numbers — keys `A B E L H X T S`. `Cmd/Ctrl+Z` undo, `+Shift` redo, `Cmd/Ctrl+S` save, `+Shift` save-as, `Cmd/Ctrl+C` copy. **Save overwrites the file it opened**; use Save as… to keep the untouched capture.
+- Shapes are stored as objects and the canvas is redrawn from the pristine bitmap each change, so undo is free and blur is non-destructive — a redaction samples the source image, never the canvas, so blurs never compound.
 - Closing the window hides to the tray; recording keeps running. Quit from the tray.
 
 ## Known limitations (v0.1)
 
 - **Windows side is still uncompiled.** The cross-platform refactor keeps its arg-building unit-tested, but no one has run it on real Windows hardware yet. Its still-capture path in particular has never executed.
 - **Still capture hides the main window and waits 220 ms** before grabbing. That delay is a guess at compositor repaint time, not a measured value; if Recap shows up in its own screenshot, raise it.
+- **The editor draws but cannot re-select.** Shapes commit on release and can only be removed by undo — there's no click-to-move, resize or restyle after the fact.
+- **The editor has no zoom or fit control.** The canvas renders at natural size scaled to the window width, so a tall screenshot scrolls vertically.
+- **The whole UI layer is verified only in a headless browser** against a stubbed IPC bridge. The editor's renderers, pointer handling and undo/redo are covered; the actual Tauri commands behind Save, Save as… and Copy have never run.
 - **Transparency requires Tauri's `macos-private-api`** feature, so the app cannot ship on the Mac App Store. Direct notarized distribution is unaffected.
 - **Monitor mapping**: on macOS, screens are enumerated from AVFoundation and matched to Tauri's monitor list by position in that list. Multi-display setups where the two orders disagree will target the wrong screen. macOS multi-display is untested — only one display was available.
 - **No system audio** — mic only. Neither Desktop Duplication nor AVFoundation screen capture carries audio; app audio needs a loopback device (VB-Cable / BlackHole) or native code later.
@@ -88,4 +95,4 @@ src-tauri/src/
 
 ## Roadmap
 
-Still capture landed; the **annotation editor** on top of it (arrows, boxes, text, highlight, blur/redact, step numbers) has not. That plus the two untouched pillars — **scrolling capture** and **OCR / text grab** (Vision.framework on macOS) — and: GIF export (`palettegen`/`paletteuse`) · webcam picture-in-picture · system audio · click highlighting · trim-before-save · settings persistence (`tauri-plugin-store`) · configurable hotkeys.
+Still capture and the annotation editor have landed. The two untouched pillars are **scrolling capture** and **OCR / text grab** (Vision.framework on macOS), plus: GIF export (`palettegen`/`paletteuse`) · webcam picture-in-picture · system audio · click highlighting · trim-before-save · settings persistence (`tauri-plugin-store`) · configurable hotkeys.
