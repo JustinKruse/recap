@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Recap — Annotate</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="editor.css" />
+</head>
+<body class="editor-body">
+
+  <header class="ed-bar">
+    <div class="ed-tools" role="toolbar" aria-label="Annotation tools">
+      <button class="tool" data-tool="arrow"     title="Arrow (A)"        aria-pressed="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20 L18 6 M18 6 h-7 M18 6 v7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <button class="tool" data-tool="box"       title="Box (B)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      </button>
+      <button class="tool" data-tool="ellipse"   title="Ellipse (E)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="12" rx="8" ry="6" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      </button>
+      <button class="tool" data-tool="line"      title="Line (L)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19 L20 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <span class="ed-sep" aria-hidden="true"></span>
+      <button class="tool" data-tool="highlight" title="Highlight (H)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="9" width="18" height="7" rx="1" fill="currentColor" opacity="0.5"/></svg>
+      </button>
+      <button class="tool" data-tool="blur"      title="Blur / redact (X)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><g fill="currentColor"><rect x="4" y="6" width="5" height="5"/><rect x="10" y="6" width="5" height="5" opacity="0.55"/><rect x="16" y="6" width="4" height="5" opacity="0.8"/><rect x="4" y="13" width="5" height="5" opacity="0.7"/><rect x="10" y="13" width="5" height="5"/><rect x="16" y="13" width="4" height="5" opacity="0.45"/></g></svg>
+      </button>
+      <button class="tool" data-tool="text"      title="Text (T)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6 h14 M12 6 v13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <button class="tool" data-tool="step"      title="Step number (S)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2"/><text x="12" y="16" text-anchor="middle" font-size="10" fill="currentColor" font-family="system-ui">1</text></svg>
+      </button>
+    </div>
+
+    <div class="ed-style">
+      <div class="swatches" id="swatches" role="radiogroup" aria-label="Colour"></div>
+      <label class="ed-width" title="Stroke width">
+        <input id="stroke" type="range" min="1" max="16" value="4" />
+      </label>
+    </div>
+
+    <div class="ed-actions">
+      <button id="btn-undo" class="ghost-btn" title="Undo (Cmd/Ctrl+Z)">Undo</button>
+      <button id="btn-redo" class="ghost-btn" title="Redo (Cmd/Ctrl+Shift+Z)">Redo</button>
+      <button id="btn-copy" class="ghost-btn" title="Copy to clipboard (Cmd/Ctrl+C)">Copy</button>
+      <button id="btn-saveas" class="ghost-btn" title="Save as… (Cmd/Ctrl+Shift+S)">Save as…</button>
+      <button id="btn-save" class="primary-btn" title="Save (Cmd/Ctrl+S)">Save</button>
+    </div>
+  </header>
+
+  <main class="ed-stage" id="stage">
+    <div class="ed-canvas-wrap" id="wrap">
+      <canvas id="canvas"></canvas>
+      <textarea id="text-input" class="ed-text-input" hidden spellcheck="false"></textarea>
+    </div>
+  </main>
+
+  <footer class="ed-status">
+    <span id="ed-name" class="mono muted"></span>
+    <span id="ed-dims" class="mono muted"></span>
+    <span id="ed-hint" class="muted">Drag to draw · Esc deselects tool focus</span>
+  </footer>
+
+  <div id="toast" class="toast" hidden>
+    <span id="toast-msg"></span>
+    <button id="toast-action" class="ghost-btn" hidden></button>
+  </div>
+
+  <script src="editor.js"></script>
+</body>
+</html>

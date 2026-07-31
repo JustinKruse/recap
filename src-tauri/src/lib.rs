@@ -1,4 +1,5 @@
 mod capture;
+mod editor;
 mod ffmpeg;
 mod recorder;
 mod still;
@@ -243,10 +244,10 @@ fn hotkey_snap(app: &tauri::AppHandle) {
         }
         match result {
             Ok(path) => {
-                let _ = app.emit(
-                    "still-captured",
-                    serde_json::json!({ "path": path.display().to_string() }),
-                );
+                let path = path.display().to_string();
+                let _ = app.emit("still-captured", serde_json::json!({ "path": path }));
+                // Capture straight into the editor — that's the Snagit loop.
+                let _ = editor::open_editor(app.clone(), path);
             }
             Err(message) => {
                 let _ = app.emit(
@@ -265,6 +266,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(RecorderHandle::new())
         .invoke_handler(tauri::generate_handler![
             init_info,
@@ -272,6 +274,11 @@ pub fn run() {
             pick_output_dir,
             open_region_overlay,
             capture_still,
+            editor::open_editor,
+            editor::load_image,
+            editor::save_image,
+            editor::save_image_as,
+            editor::copy_image,
             start_recording,
             toggle_pause,
             stop_recording,

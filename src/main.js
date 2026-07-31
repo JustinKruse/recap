@@ -262,6 +262,8 @@ els.snap.addEventListener("click", async () => {
   try {
     const path = await invoke("capture_still", { cfg: currentConfig() });
     const name = path.split(/[\\/]/).pop();
+    // Capture straight into the editor — that's the Snagit loop.
+    await invoke("open_editor", { path }).catch(() => {});
     toast(`Saved ${name}`, "ok", {
       label: "Open folder",
       onClick: () => invoke("reveal_path", { path }).catch(() => {}),

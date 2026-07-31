@@ -1,0 +1,147 @@
+/* Recap — annotation editor.
+   Shares the palette in styles.css. The canvas is the subject, so the chrome
+   stays dark, flat and quiet: no gradients competing with the screenshot. */
+
+.editor-body {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100%;
+}
+
+/* ---- toolbar ------------------------------------------------------------ */
+
+.ed-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.ed-tools { display: flex; align-items: center; gap: 2px; }
+
+.ed-sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 6px;
+  background: var(--border);
+}
+
+.tool {
+  width: 34px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.tool svg { width: 20px; height: 20px; }
+.tool:hover { color: var(--text); background: var(--panel-2); }
+.tool[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--panel-2);
+  border-color: var(--border);
+  box-shadow: inset 0 0 0 1px rgba(255, 69, 69, 0.35);
+}
+
+/* ---- colour + width ----------------------------------------------------- */
+
+.ed-style { display: flex; align-items: center; gap: 12px; }
+
+.swatches { display: flex; gap: 4px; }
+
+.swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.swatch[aria-checked="true"] {
+  border-color: var(--text);
+  /* Ring sits outside so it reads on a swatch of any colour, including white. */
+  box-shadow: 0 0 0 1px var(--panel);
+}
+
+.ed-width { display: flex; align-items: center; }
+.ed-width input { width: 96px; accent-color: var(--red); }
+
+/* ---- actions ------------------------------------------------------------ */
+
+.ed-actions { display: flex; gap: 6px; margin-left: auto; }
+
+.primary-btn {
+  padding: 6px 14px;
+  color: #fff;
+  background: var(--red-deep);
+  border: 1px solid var(--red);
+  border-radius: 8px;
+  font: inherit;
+  cursor: pointer;
+}
+.primary-btn:hover { background: var(--red); }
+
+/* ---- stage -------------------------------------------------------------- */
+
+.ed-stage {
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  /* Chequerboard: makes it obvious where the image ends. */
+  background-color: #0b0d10;
+  background-image:
+    linear-gradient(45deg, #14171c 25%, transparent 25%),
+    linear-gradient(-45deg, #14171c 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #14171c 75%),
+    linear-gradient(-45deg, transparent 75%, #14171c 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+}
+
+.ed-canvas-wrap { position: relative; line-height: 0; }
+
+#canvas {
+  display: block;
+  max-width: 100%;
+  box-shadow: 0 8px 34px rgba(0, 0, 0, 0.55);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+/* Live text entry, positioned over the canvas at the click point. */
+.ed-text-input {
+  position: absolute;
+  z-index: 3;
+  min-width: 120px;
+  padding: 2px 4px;
+  color: var(--text);
+  background: rgba(12, 14, 18, 0.9);
+  border: 1px dashed var(--red);
+  border-radius: 4px;
+  font-family: system-ui, sans-serif;
+  line-height: 1.2;
+  resize: none;
+  overflow: hidden;
+  outline: none;
+}
+
+/* ---- status bar --------------------------------------------------------- */
+
+.ed-status {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 12px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+.ed-status #ed-hint { margin-left: auto; }
