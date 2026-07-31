@@ -75,7 +75,15 @@
 
 /* ---- actions ------------------------------------------------------------ */
 
-.ed-actions { display: flex; gap: 6px; margin-left: auto; }
+.ed-actions { display: flex; gap: 6px; }
+
+.ed-zoom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+.ed-zoom .ghost-btn { min-width: 34px; text-align: center; }
 
 .primary-btn {
   padding: 6px 14px;
@@ -92,6 +100,7 @@
 
 .ed-stage {
   overflow: auto;
+  min-height: 0;
   display: grid;
   place-items: center;
   padding: 18px;
@@ -110,7 +119,8 @@
 
 #canvas {
   display: block;
-  max-width: 100%;
+  /* Size is driven from JS so zoom and fit share one code path; leaving a CSS
+     max-width here would silently fight the explicit width. */
   box-shadow: 0 8px 34px rgba(0, 0, 0, 0.55);
   cursor: crosshair;
   touch-action: none;

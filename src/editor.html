@@ -11,7 +11,11 @@
 
   <header class="ed-bar">
     <div class="ed-tools" role="toolbar" aria-label="Annotation tools">
-      <button class="tool" data-tool="arrow"     title="Arrow (A)"        aria-pressed="true">
+      <button class="tool" data-tool="select"    title="Select &amp; move (V)" aria-pressed="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3 L5 18 L9 14 L11.5 19.5 L14 18.5 L11.5 13.5 L17 13 Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+      </button>
+      <span class="ed-sep" aria-hidden="true"></span>
+      <button class="tool" data-tool="arrow"     title="Arrow (A)">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20 L18 6 M18 6 h-7 M18 6 v7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
       <button class="tool" data-tool="box"       title="Box (B)">
@@ -45,6 +49,12 @@
       </label>
     </div>
 
+    <div class="ed-zoom">
+      <button id="zoom-out" class="ghost-btn" title="Zoom out (Cmd/Ctrl+-)">−</button>
+      <button id="zoom-fit" class="ghost-btn mono" title="Fit / 100% (Cmd/Ctrl+0)">Fit</button>
+      <button id="zoom-in" class="ghost-btn" title="Zoom in (Cmd/Ctrl++)">+</button>
+    </div>
+
     <div class="ed-actions">
       <button id="btn-undo" class="ghost-btn" title="Undo (Cmd/Ctrl+Z)">Undo</button>
       <button id="btn-redo" class="ghost-btn" title="Redo (Cmd/Ctrl+Shift+Z)">Redo</button>
@@ -64,7 +74,7 @@
   <footer class="ed-status">
     <span id="ed-name" class="mono muted"></span>
     <span id="ed-dims" class="mono muted"></span>
-    <span id="ed-hint" class="muted">Drag to draw · Esc deselects tool focus</span>
+    <span id="ed-hint" class="muted">V select · drag to move · Del removes · Esc deselects</span>
   </footer>
 
   <div id="toast" class="toast" hidden>

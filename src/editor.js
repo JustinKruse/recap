@@ -29,7 +29,9 @@ let imagePath = "";
 let shapes = [];         // committed annotations, in draw order
 let redoStack = [];
 let draft = null;        // shape under the cursor mid-drag
-let tool = "arrow";
+let tool = "select";
+let selected = -1;        // index into shapes, or -1
+let zoom = 0;             // 0 means "fit to window"
 let color = COLORS[0];
 let stroke = 4;
 let stepNext = 1;
@@ -57,10 +59,35 @@ function toast(message, kind = "ok", action = null) {
 
 // ---- geometry ---------------------------------------------------------------
 
-/// Displayed pixels per image pixel. The canvas is at natural size and CSS
-/// scales it down to fit, so every pointer coordinate needs dividing by this.
+/// Displayed pixels per image pixel. Every pointer coordinate divides by this.
 function scale() {
   return canvas.clientWidth / canvas.width || 1;
+}
+
+/// The zoom that makes the whole image fit the stage. Never magnifies past 1:1
+/// on its own — "fit" on a small image should not blow it up.
+function fitScale() {
+  const stage = document.getElementById("stage");
+  const pad = 36;
+  return Math.min(
+    (stage.clientWidth - pad) / canvas.width,
+    (stage.clientHeight - pad) / canvas.height,
+    1
+  );
+}
+
+function applyZoom() {
+  if (!img) return;
+  const z = zoom === 0 ? fitScale() : zoom;
+  canvas.style.width = `${Math.round(canvas.width * z)}px`;
+  canvas.style.height = `${Math.round(canvas.height * z)}px`;
+  $("zoom-fit").textContent = zoom === 0 ? "Fit" : `${Math.round(z * 100)}%`;
+  if (!textInput.hidden) commitText(); // its position is scale-dependent
+}
+
+function setZoom(z) {
+  zoom = z === 0 ? 0 : Math.min(Math.max(z, 0.1), 8);
+  applyZoom();
 }
 
 function toImage(e) {
@@ -77,6 +104,79 @@ function normalize(a, b) {
     w: Math.abs(b.x - a.x),
     h: Math.abs(b.y - a.y),
   };
+}
+
+// ---- shape geometry ---------------------------------------------------------
+
+/// Axis-aligned bounds in image pixels. Used for hit-testing and for drawing
+/// the selection outline, so both agree by construction.
+function shapeBounds(s) {
+  switch (s.type) {
+    case "arrow":
+    case "line": {
+      const pad = s.stroke * 2 + 6;
+      return {
+        x: Math.min(s.x1, s.x2) - pad,
+        y: Math.min(s.y1, s.y2) - pad,
+        w: Math.abs(s.x2 - s.x1) + pad * 2,
+        h: Math.abs(s.y2 - s.y1) + pad * 2,
+      };
+    }
+    case "step":
+      return { x: s.x - s.radius, y: s.y - s.radius, w: s.radius * 2, h: s.radius * 2 };
+    case "text": {
+      ctx.save();
+      ctx.font = `600 ${s.size}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+      const lines = s.text.split("\n");
+      const w = Math.max(...lines.map((l) => ctx.measureText(l).width));
+      ctx.restore();
+      return { x: s.x, y: s.y, w, h: lines.length * s.size * 1.2 };
+    }
+    default:
+      return { x: s.x, y: s.y, w: s.w, h: s.h };
+  }
+}
+
+function distToSegment(p, s) {
+  const dx = s.x2 - s.x1;
+  const dy = s.y2 - s.y1;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(p.x - s.x1, p.y - s.y1);
+  let t = ((p.x - s.x1) * dx + (p.y - s.y1) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (s.x1 + t * dx), p.y - (s.y1 + t * dy));
+}
+
+function hits(s, p) {
+  if (s.type === "arrow" || s.type === "line") {
+    // Thin shapes need a generous margin or they're impossible to grab.
+    return distToSegment(p, s) <= Math.max(s.stroke, 4) + 6;
+  }
+  if (s.type === "step") return Math.hypot(p.x - s.x, p.y - s.y) <= s.radius + 4;
+  if (s.type === "ellipse") {
+    const rx = s.w / 2;
+    const ry = s.h / 2;
+    if (rx <= 0 || ry <= 0) return false;
+    const nx = (p.x - (s.x + rx)) / rx;
+    const ny = (p.y - (s.y + ry)) / ry;
+    return nx * nx + ny * ny <= 1.15;
+  }
+  const b = shapeBounds(s);
+  return p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
+}
+
+/// Topmost shape under the cursor — last drawn is nearest the viewer.
+function hitTest(p) {
+  for (let i = shapes.length - 1; i >= 0; i--) if (hits(shapes[i], p)) return i;
+  return -1;
+}
+
+function moveShape(s, dx, dy) {
+  if (s.type === "arrow" || s.type === "line") {
+    s.x1 += dx; s.y1 += dy; s.x2 += dx; s.y2 += dy;
+  } else {
+    s.x += dx; s.y += dy;
+  }
 }
 
 // ---- drawing ----------------------------------------------------------------
@@ -198,18 +298,31 @@ function drawShape(s) {
   ctx.restore();
 }
 
+function drawSelection(s) {
+  const b = shapeBounds(s);
+  const m = 6 / scale(); // constant on screen regardless of zoom
+  ctx.save();
+  ctx.setLineDash([6 / scale(), 4 / scale()]);
+  ctx.lineWidth = 1.5 / scale();
+  ctx.strokeStyle = "#4aa8ff";
+  ctx.strokeRect(b.x - m, b.y - m, b.w + m * 2, b.h + m * 2);
+  ctx.restore();
+}
+
 function render() {
   if (!img) return;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(img, 0, 0);
   for (const s of shapes) drawShape(s);
   if (draft) drawShape(draft);
+  if (selected >= 0 && shapes[selected]) drawSelection(shapes[selected]);
 }
 
 // ---- history ----------------------------------------------------------------
 
 function commit(shape) {
   shapes.push(shape);
+  selected = -1;
   redoStack.length = 0; // a new mark forks history
   dirty = true;
   render();
@@ -218,6 +331,7 @@ function commit(shape) {
 function undo() {
   const s = shapes.pop();
   if (!s) return;
+  selected = -1;
   redoStack.push(s);
   if (s.type === "step") stepNext = Math.max(1, stepNext - 1);
   dirty = true;
@@ -227,6 +341,7 @@ function undo() {
 function redo() {
   const s = redoStack.pop();
   if (!s) return;
+  selected = -1;
   shapes.push(s);
   if (s.type === "step") stepNext += 1;
   dirty = true;
@@ -236,11 +351,22 @@ function redo() {
 // ---- pointer ----------------------------------------------------------------
 
 let start = null;
+let dragFrom = null;   // last pointer position while moving a selection
+let movedAny = false;
 
 canvas.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
   if (!textInput.hidden) { commitText(); return; }
   const p = toImage(e);
+
+  if (tool === "select") {
+    selected = hitTest(p);
+    dragFrom = selected >= 0 ? p : null;
+    movedAny = false;
+    if (selected >= 0) canvas.setPointerCapture(e.pointerId);
+    render();
+    return;
+  }
 
   if (tool === "text") { openTextInput(p); return; }
   if (tool === "step") {
@@ -261,19 +387,40 @@ canvas.addEventListener("pointerdown", (e) => {
 });
 
 canvas.addEventListener("pointermove", (e) => {
+  if (dragFrom && selected >= 0) {
+    const p = toImage(e);
+    moveShape(shapes[selected], p.x - dragFrom.x, p.y - dragFrom.y);
+    dragFrom = p;
+    movedAny = true;
+    render();
+    return;
+  }
+  if (tool === "select") {
+    canvas.style.cursor = hitTest(toImage(e)) >= 0 ? "move" : "default";
+    return;
+  }
   if (!start) return;
   draft = buildShape(start, toImage(e));
   render();
 });
 
-canvas.addEventListener("pointerup", (e) => {
+canvas.addEventListener("pointerup", () => {
+  if (dragFrom) {
+    dragFrom = null;
+    // Only a move that actually moved something counts as an edit.
+    if (movedAny) { dirty = true; redoStack.length = 0; }
+    return;
+  }
   if (!start) return;
-  const shape = buildShape(start, toImage(e));
+  const shape = buildShape(start, lastPointer);
   start = null;
   draft = null;
   if (isTooSmall(shape)) { render(); return; }
   commit(shape);
 });
+
+let lastPointer = { x: 0, y: 0 };
+canvas.addEventListener("pointermove", (e) => { lastPointer = toImage(e); });
 
 function buildShape(a, b) {
   if (tool === "arrow" || tool === "line") {
@@ -330,7 +477,12 @@ textInput.addEventListener("keydown", (e) => {
   else if (e.key === "Escape") { e.preventDefault(); textInput.hidden = true; textAt = null; }
   e.stopPropagation(); // don't let tool hotkeys fire while typing
 });
-textInput.addEventListener("blur", commitText);
+textInput.addEventListener("blur", () => {
+  // Losing focus because the window deactivated is not a commit — the user is
+  // switching apps mid-sentence and will come back to finish.
+  if (!document.hasFocus()) return;
+  commitText();
+});
 textInput.addEventListener("input", () => {
   textInput.rows = textInput.value.split("\n").length;
 });
@@ -359,11 +511,42 @@ COLORS.forEach((c, i) => {
     color = c;
     swatchBox.querySelectorAll(".swatch").forEach((s) => s.setAttribute("aria-checked", "false"));
     b.setAttribute("aria-checked", "true");
+    // With something selected, a colour click restyles it rather than only
+    // setting the colour of the next shape.
+    if (selected >= 0 && shapes[selected]) {
+      shapes[selected].color = c;
+      dirty = true;
+      render();
+    }
   });
   swatchBox.appendChild(b);
 });
 
-$("stroke").addEventListener("input", (e) => { stroke = Number(e.target.value); });
+$("stroke").addEventListener("input", (e) => {
+  stroke = Number(e.target.value);
+  if (selected >= 0 && shapes[selected]) {
+    const s = shapes[selected];
+    s.stroke = stroke;
+    if (s.type === "step") s.radius = Math.max(14, stroke * 5);
+    if (s.type === "text") s.size = Math.max(16, stroke * 8);
+    dirty = true;
+    render();
+  }
+});
+
+function deleteSelected() {
+  if (selected < 0 || !shapes[selected]) return;
+  const [gone] = shapes.splice(selected, 1);
+  if (gone.type === "step") stepNext = Math.max(1, stepNext - 1);
+  selected = -1;
+  dirty = true;
+  redoStack.length = 0;   // a delete forks history like any other edit
+  render();
+}
+
+$("zoom-in").addEventListener("click", () => setZoom((zoom || fitScale()) * 1.25));
+$("zoom-out").addEventListener("click", () => setZoom((zoom || fitScale()) / 1.25));
+$("zoom-fit").addEventListener("click", () => setZoom(zoom === 0 ? 1 : 0));
 
 $("btn-undo").addEventListener("click", undo);
 $("btn-redo").addEventListener("click", redo);
@@ -412,7 +595,7 @@ $("btn-copy").addEventListener("click", copy);
 
 // ---- keyboard --------------------------------------------------------------------
 
-const TOOL_KEYS = { a: "arrow", b: "box", e: "ellipse", l: "line", h: "highlight", x: "blur", t: "text", s: "step" };
+const TOOL_KEYS = { v: "select", a: "arrow", b: "box", e: "ellipse", l: "line", h: "highlight", x: "blur", t: "text", s: "step" };
 
 window.addEventListener("keydown", (e) => {
   const mod = e.metaKey || e.ctrlKey;
@@ -427,11 +610,21 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (mod && e.key.toLowerCase() === "c") { e.preventDefault(); copy(); return; }
+  if (mod && (e.key === "0" || e.key === "=" || e.key === "+" || e.key === "-")) {
+    e.preventDefault();
+    if (e.key === "0") setZoom(zoom === 0 ? 1 : 0);
+    else setZoom((zoom || fitScale()) * (e.key === "-" ? 1 / 1.25 : 1.25));
+    return;
+  }
   if (mod) return;
 
   if (e.key === "Escape") {
-    // Abandon whatever is half-drawn.
-    start = null; draft = null; render();
+    // Abandon whatever is half-drawn, and drop the selection.
+    start = null; draft = null; dragFrom = null; selected = -1; render();
+    return;
+  }
+  if (e.key === "Delete" || e.key === "Backspace") {
+    if (selected >= 0) { e.preventDefault(); deleteSelected(); }
     return;
   }
   const t = TOOL_KEYS[e.key.toLowerCase()];
@@ -466,9 +659,11 @@ async function load(path) {
   shapes = [];
   redoStack = [];
   stepNext = 1;
+  selected = -1;
   dirty = false;
   $("ed-name").textContent = basename(path);
   $("ed-dims").textContent = `${img.naturalWidth} × ${img.naturalHeight}`;
+  applyZoom();
   render();
 }
 
@@ -499,7 +694,8 @@ const initial = params.get("path");
 if (initial) load(initial);
 else toast("No image to edit.", "error");
 
-setTool("arrow");
+setTool("select");
 window.addEventListener("resize", () => {
-  if (!textInput.hidden) commitText(); // its position is scale-dependent
+  applyZoom();   // "fit" depends on the stage size
+  render();
 });
