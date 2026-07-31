@@ -152,6 +152,14 @@ impl CaptureBackend for MacOs {
 
         // ---- video input: avfoundation screen device -----------------------
         // Input options must precede their -i.
+        //
+        // Deliberately NO `-framerate` here. AVCaptureScreenInput rejects it
+        // ("Configuration of video device failed, falling back to default"),
+        // after which ffmpeg can't estimate the input rate, assumes an absurdly
+        // high one, and duplicates frames without end — it writes megabytes a
+        // second, ignores `-t`, and never terminates. Measured: 35 MB and still
+        // running at a 25 s kill, producing a file with no duration at all.
+        // The rate is set on the output instead, below.
         a.extend([
             "-f".into(),
             "avfoundation".into(),
@@ -159,8 +167,6 @@ impl CaptureBackend for MacOs {
             if cfg.capture_cursor { "1".into() } else { "0".into() },
             "-capture_mouse_clicks".into(),
             "0".into(),
-            "-framerate".into(),
-            cfg.fps.clamp(1, 120).to_string(),
             "-i".into(),
             format!("{}:none", target.screen_id),
         ]);
@@ -193,6 +199,10 @@ impl CaptureBackend for MacOs {
                 format!("crop={}:{}:{}:{}", r.width, r.height, r.x, r.y),
             ]);
         }
+
+        // ---- output frame rate -----------------------------------------------
+        // The only place the rate can actually be set (see the input note).
+        a.extend(["-r".into(), cfg.fps.clamp(1, 120).to_string()]);
 
         // ---- video encoder ---------------------------------------------------
         let enc_args: &[&str] = match encoder {
@@ -338,6 +348,25 @@ mod tests {
         assert!(joined.contains("-i :1"));
         assert!(joined.contains("-map 1:a"));
         assert!(joined.contains("-c:a aac"));
+    }
+
+    /// Regression guard. `-framerate` before `-i` is rejected by
+    /// AVCaptureScreenInput; ffmpeg then can't estimate the input rate,
+    /// duplicates frames without bound, ignores `-t` and never exits, leaving a
+    /// file with no duration. The rate belongs on the output only.
+    #[test]
+    fn rate_is_set_on_the_output_never_on_the_avfoundation_input() {
+        let mut c = cfg();
+        c.fps = 60;
+        let args = MacOs.segment_args(&c, &target(1, None), "libx264", Path::new("/tmp/seg.mp4"));
+        let i = args.iter().position(|a| a == "-i").expect("has an input");
+        assert!(
+            !args[..i].iter().any(|a| a == "-framerate"),
+            "input options must not carry -framerate: {args:?}"
+        );
+        let r = args.iter().position(|a| a == "-r").expect("has -r");
+        assert!(r > i, "-r must be an output option");
+        assert_eq!(args[r + 1], "60");
     }
 
     #[test]
