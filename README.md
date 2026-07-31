@@ -2,7 +2,7 @@
 
 A minimal Snagit-style screen recorder for **macOS and Windows**. Tauri 2 shell (Rust) driving ffmpeg's platform-native capture — no capture engine of our own, just clean process management around ones that already work.
 
-**Features:** full-screen or drag-to-select region capture, still screenshots, mic audio, pause/resume, 3-2-1 countdown, tray icon, global hotkeys (`Ctrl+Alt+R` record/stop, `Ctrl+Alt+P` pause, `Ctrl+Alt+S` still), hardware encoding with automatic software fallback.
+**Features:** full-screen or drag-to-select region capture, still screenshots, an annotation editor, OCR text grab, mic audio, pause/resume, 3-2-1 countdown, tray icon, global hotkeys (`Ctrl+Alt+R` record/stop, `Ctrl+Alt+P` pause, `Ctrl+Alt+S` still, `Ctrl+Alt+T` text grab), hardware encoding with automatic software fallback.
 
 ## How capture works per platform
 
@@ -12,6 +12,7 @@ Everything platform-specific sits behind the `CaptureBackend` trait in `src-taur
 |---|---|---|
 | Video source | `avfoundation` screen device | `ddagrab` (GPU Desktop Duplication) |
 | Still capture | Apple's `screencapture` | `ddagrab` single frame + `hwdownload` |
+| OCR | Vision.framework via `objc2` | not implemented (returns an error) |
 | Region capture | `crop` filter on a full-screen grab | native `offset_x/offset_y/video_size` |
 | Hardware encoder | `h264_videotoolbox` | NVENC → AMF → QuickSync |
 | Audio | `avfoundation` input, by device index | `dshow` input, by device name |
@@ -68,6 +69,7 @@ src-tauri/src/
   ffmpeg.rs              OS-agnostic: locate binary, probe encoders, concat
   still.rs               screenshots: full-display grab, then crop to region
   editor.rs              annotation editor plumbing: load/save/copy, window
+  ocr.rs                 text grab: Vision on macOS, reading-order sort
   capture/
     mod.rs               CaptureBackend trait, shared helpers, backend selection
     macos.rs             avfoundation + VideoToolbox
@@ -78,12 +80,15 @@ src-tauri/src/
 - **Pause** stops the current ffmpeg segment gracefully (writes `q` to stdin; kill only after a 4 s timeout, since a hard kill truncates the MP4). Resume starts `seg_001.mp4`, `seg_002.mp4`, … Stop losslessly concatenates segments with the concat demuxer.
 - **Annotation editor** opens automatically after a still. Tools: arrow, box, ellipse, line, highlight, blur/redact, text, step numbers — keys `A B E L H X T S`. `Cmd/Ctrl+Z` undo, `+Shift` redo, `Cmd/Ctrl+S` save, `+Shift` save-as, `Cmd/Ctrl+C` copy. **Save overwrites the file it opened**; use Save as… to keep the untouched capture.
 - Shapes are stored as objects and the canvas is redrawn from the pristine bitmap each change, so undo is free and blur is non-destructive — a redaction samples the source image, never the canvas, so blurs never compound.
+- **Text grab** (`Ctrl+Alt+T`) captures the current target, reads it with Vision, copies the text to the clipboard and shows it in an editable sheet. The screenshot is scratch and gets deleted — a text grab shouldn't leave PNGs behind. Vision returns observations unordered with a bottom-left origin; boxes are flipped to top-left and lines sorted into reading order with a row-overlap tolerance so side-by-side columns don't interleave.
 - Closing the window hides to the tray; recording keeps running. Quit from the tray.
 
 ## Known limitations (v0.1)
 
 - **Windows side is still uncompiled.** The cross-platform refactor keeps its arg-building unit-tested, but no one has run it on real Windows hardware yet. Its still-capture path in particular has never executed.
 - **Still capture hides the main window and waits 220 ms** before grabbing. That delay is a guess at compositor repaint time, not a measured value; if Recap shows up in its own screenshot, raise it.
+- **OCR accuracy drops on small text.** Reading a whole 3440×1440 screen, Vision returned `Snacit` for *Snagit*, `clioboard` for *clipboard* and `10.65 GE` for *10.65 GB* — UI text at that scale is near its limit. Region grabs of larger text are markedly better. Upscaling the scratch PNG ~2× before recognition is the obvious next lever, but it hasn't been measured, so it isn't in yet.
+- **OCR is macOS-only.** Windows returns an explicit error; `Windows.Media.Ocr` needs a language pack and a WinRT binding that aren't wired up.
 - **The editor draws but cannot re-select.** Shapes commit on release and can only be removed by undo — there's no click-to-move, resize or restyle after the fact.
 - **The editor has no zoom or fit control.** The canvas renders at natural size scaled to the window width, so a tall screenshot scrolls vertically.
 - **The whole UI layer is verified only in a headless browser** against a stubbed IPC bridge. The editor's renderers, pointer handling and undo/redo are covered; the actual Tauri commands behind Save, Save as… and Copy have never run.
@@ -95,4 +100,4 @@ src-tauri/src/
 
 ## Roadmap
 
-Still capture and the annotation editor have landed. The two untouched pillars are **scrolling capture** and **OCR / text grab** (Vision.framework on macOS), plus: GIF export (`palettegen`/`paletteuse`) · webcam picture-in-picture · system audio · click highlighting · trim-before-save · settings persistence (`tauri-plugin-store`) · configurable hotkeys.
+Three pillars are done: recording, still capture + annotation editor, and OCR. **Scrolling capture** is the one left, plus: GIF export (`palettegen`/`paletteuse`) · webcam picture-in-picture · system audio · click highlighting · trim-before-save · settings persistence (`tauri-plugin-store`) · configurable hotkeys.
