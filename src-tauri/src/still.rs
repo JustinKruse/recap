@@ -10,7 +10,7 @@
 use crate::capture::{self, sanitize_region};
 use crate::ffmpeg;
 use crate::recorder::{RecorderHandle, Region};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
@@ -105,7 +105,7 @@ fn capture_into(app: &AppHandle, final_path: PathBuf) -> Result<PathBuf, String>
 }
 
 /// Crop in monitor-relative physical pixels — the overlay's coordinate space.
-fn crop(ff: &PathBuf, src: &PathBuf, r: Region, out: &PathBuf) -> Result<(), String> {
+fn crop(ff: &Path, src: &Path, r: Region, out: &Path) -> Result<(), String> {
     let (x, y, w, h) = sanitize_region(r.x as i32, r.y as i32, r.width, r.height);
     let args = vec![
         "-hide_banner".to_string(),
@@ -123,7 +123,7 @@ fn crop(ff: &PathBuf, src: &PathBuf, r: Region, out: &PathBuf) -> Result<(), Str
 }
 
 /// Run a capture command to completion, failing rather than hanging forever.
-fn run(program: &PathBuf, args: &[String]) -> Result<(), String> {
+pub(crate) fn run(program: &Path, args: &[String]) -> Result<(), String> {
     let mut child = ffmpeg::quiet_command(program)
         .args(args)
         .stdin(Stdio::null())

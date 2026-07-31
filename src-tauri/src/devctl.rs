@@ -20,7 +20,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Listener, Manager};
 
 use crate::recorder::RecorderHandle;
-use crate::{recorder, still};
+use crate::recorder;
 
 const ADDR: &str = "127.0.0.1:7333";
 
@@ -182,7 +182,7 @@ fn eval(app: &AppHandle, label: &str, js: &str) -> Value {
 
 fn invoke(app: &AppHandle, name: &str) -> Value {
     let result: Result<Value, String> = match name {
-        "still" => still::capture(app).map(|p| json!({ "path": p.display().to_string() })),
+        "still" => crate::capture_still_flow(app).map(|path| json!({ "path": path })),
         "grab_text" => crate::read_screen_text(app).map(|r| json!(r)),
         "record_start" => recorder::start(app).map(|_| json!({ "started": true })),
         "record_stop" => recorder::stop(app).map(|_| json!({ "stopping": true })),

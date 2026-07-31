@@ -92,9 +92,17 @@ pub async fn save_image_as(
     let Some(target) = dialog.blocking_save_file() else {
         return Ok(None);
     };
-    let target = target
+    let mut target = target
         .into_path()
         .map_err(|e| format!("bad destination: {e}"))?;
+    // Only PNG is ever encoded here, so a name ending .jpg would be a lie on
+    // disk that every downstream tool would then misread.
+    if !target
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("png"))
+    {
+        target.set_extension("png");
+    }
 
     let bytes = decode_data_url(&data_url)?;
     std::fs::write(&target, bytes).map_err(|e| format!("cannot save image: {e}"))?;

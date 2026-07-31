@@ -103,11 +103,13 @@ pub fn recognize(path: &Path) -> Result<OcrResult, String> {
                 out.push(OcrLine {
                     text,
                     confidence: best.confidence(),
-                    x: b.origin.x,
+                    // Vision can report a box a hair outside the image; clamp so
+                    // consumers never see a negative normalised coordinate.
+                    x: b.origin.x.clamp(0.0, 1.0),
                     // Vision's origin is bottom-left; flip to top-left.
-                    y: 1.0 - b.origin.y - b.size.height,
-                    width: b.size.width,
-                    height: b.size.height,
+                    y: (1.0 - b.origin.y - b.size.height).clamp(0.0, 1.0),
+                    width: b.size.width.clamp(0.0, 1.0),
+                    height: b.size.height.clamp(0.0, 1.0),
                 });
             }
         }

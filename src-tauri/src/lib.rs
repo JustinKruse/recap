@@ -1,3 +1,4 @@
+pub mod cli;
 mod capture;
 // Debug-only: exposes an eval-anything socket. Must never ship in release.
 #[cfg(debug_assertions)]
@@ -6,11 +7,13 @@ mod editor;
 mod ffmpeg;
 mod ocr;
 mod recorder;
+mod settings;
 mod still;
 
 use capture::AudioDevice;
 use recorder::{RecorderHandle, RecordingConfig};
 use serde::Serialize;
+use std::path::PathBuf;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -39,6 +42,9 @@ struct InitInfo {
     audio_devices: Vec<AudioDevice>,
     monitors: Vec<MonitorInfo>,
     default_output_dir: String,
+    /// The effective config, after restoring last run's settings. The UI mirrors
+    /// its controls onto this so a restored setting is visible, not just active.
+    config: RecordingConfig,
     /// Which capture backend is active, e.g. "macos-avfoundation".
     backend: &'static str,
 }
@@ -92,21 +98,29 @@ fn init_info(
     };
     let monitors = monitor_list(&app);
     let default_dir = default_output_dir(&app);
-    {
+    let config = {
         let mut r = state.0.lock().unwrap();
         r.ffmpeg_path = ffmpeg_path.clone();
         r.encoders = encoders.clone();
         r.screens = screens;
-        if r.config.output_dir.is_empty() {
+        // A restored folder that has since been deleted is worse than useless:
+        // every capture would fail. Fall back rather than persist a dead path.
+        if r.config.output_dir.is_empty() || !PathBuf::from(&r.config.output_dir).is_dir() {
             r.config.output_dir = default_dir.clone();
         }
-    }
+        // The monitor list can shrink between runs (display unplugged).
+        if r.config.monitor_index >= monitors.len().max(1) {
+            r.config.monitor_index = 0;
+        }
+        r.config.clone()
+    };
     Ok(InitInfo {
         ffmpeg_path: ffmpeg_path.map(|p| p.display().to_string()),
         encoders,
         audio_devices,
         monitors,
         default_output_dir: default_dir,
+        config,
         backend: backend.name(),
     })
 }
@@ -115,12 +129,8 @@ fn init_info(
 /// always use fresh config.
 #[tauri::command]
 fn sync_config(state: tauri::State<RecorderHandle>, cfg: RecordingConfig) {
-    let mut r = state.0.lock().unwrap();
-    // Preserve a selected region only while it still matches region mode.
-    if cfg.mode != "region" {
-        r.region = None;
-    }
-    r.config = cfg;
+    state.0.lock().unwrap().apply_config(cfg);
+    settings::save_debounced(&state);
 }
 
 #[tauri::command]
@@ -175,14 +185,7 @@ fn open_region_overlay(
 
 #[tauri::command]
 fn start_recording(app: tauri::AppHandle, cfg: RecordingConfig) -> Result<(), String> {
-    {
-        let state = app.state::<RecorderHandle>();
-        let mut r = state.0.lock().unwrap();
-        if cfg.mode != "region" {
-            r.region = None;
-        }
-        r.config = cfg;
-    }
+    app.state::<RecorderHandle>().0.lock().unwrap().apply_config(cfg);
     recorder::start(&app)
 }
 
@@ -190,18 +193,11 @@ fn start_recording(app: tauri::AppHandle, cfg: RecordingConfig) -> Result<(), St
 /// `screencapture`/ffmpeg take a moment and blocking here freezes the window.
 #[tauri::command]
 async fn capture_still(app: tauri::AppHandle, cfg: RecordingConfig) -> Result<String, String> {
-    {
-        let state = app.state::<RecorderHandle>();
-        let mut r = state.0.lock().unwrap();
-        if cfg.mode != "region" {
-            r.region = None;
-        }
-        r.config = cfg;
-    }
+    app.state::<RecorderHandle>().0.lock().unwrap().apply_config(cfg);
     // Give the compositor a beat to finish hiding our own window before we
     // photograph the screen it was just covering.
     std::thread::sleep(std::time::Duration::from_millis(220));
-    still::capture(&app).map(|p| p.display().to_string())
+    capture_still_flow(&app)
 }
 
 /// Capture the current target and read the text out of it. The screenshot is a
@@ -209,14 +205,7 @@ async fn capture_still(app: tauri::AppHandle, cfg: RecordingConfig) -> Result<St
 /// the user asked for text, not another PNG in their folder.
 #[tauri::command]
 async fn grab_text(app: tauri::AppHandle, cfg: RecordingConfig) -> Result<ocr::OcrResult, String> {
-    {
-        let state = app.state::<RecorderHandle>();
-        let mut r = state.0.lock().unwrap();
-        if cfg.mode != "region" {
-            r.region = None;
-        }
-        r.config = cfg;
-    }
+    app.state::<RecorderHandle>().0.lock().unwrap().apply_config(cfg);
     read_screen_text(&app)
 }
 
@@ -257,6 +246,14 @@ fn reveal_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Capture a still and open it for annotation. The single definition of what
+/// "take a still" means, so the button, the hotkey and devctl stay in step.
+pub(crate) fn capture_still_flow(app: &tauri::AppHandle) -> Result<String, String> {
+    let path = still::capture(app)?.display().to_string();
+    editor::open_editor(app.clone(), path.clone())?;
+    Ok(path)
+}
+
 /// Ctrl+Alt+S. Runs off the hotkey thread — the capture blocks, and stalling
 /// the shortcut handler would wedge every other hotkey with it. Uses whatever
 /// config the UI last pushed, so it works with the window hidden.
@@ -274,7 +271,7 @@ fn hotkey_snap(app: &tauri::AppHandle) {
             }
             std::thread::sleep(std::time::Duration::from_millis(220));
         }
-        let result = still::capture(&app);
+        let result = capture_still_flow(&app);
         if was_visible {
             if let Some(w) = &main {
                 let _ = w.show();
@@ -282,10 +279,7 @@ fn hotkey_snap(app: &tauri::AppHandle) {
         }
         match result {
             Ok(path) => {
-                let path = path.display().to_string();
                 let _ = app.emit("still-captured", serde_json::json!({ "path": path }));
-                // Capture straight into the editor — that's the Snagit loop.
-                let _ = editor::open_editor(app.clone(), path);
             }
             Err(message) => {
                 let _ = app.emit(
@@ -360,6 +354,11 @@ pub fn run() {
             reveal_path
         ])
         .setup(|app| {
+            settings::init(app.handle());
+            if let Some(cfg) = settings::load() {
+                app.state::<RecorderHandle>().0.lock().unwrap().config = cfg;
+            }
+
             #[cfg(debug_assertions)]
             devctl::start(app.handle());
 
@@ -429,6 +428,7 @@ pub fn run() {
                     }
                     "toggle" => recorder::toggle_record(app),
                     "quit" => {
+                        settings::save_now(&app.state::<RecorderHandle>());
                         recorder::shutdown(app);
                         app.exit(0);
                     }

@@ -110,6 +110,25 @@ pub struct Recorder {
     stderr_tail: Arc<Mutex<VecDeque<String>>>,
 }
 
+impl Recorder {
+    /// Adopt a config from the UI, dropping any region it invalidates.
+    ///
+    /// A region belongs to the display it was drawn on, so switching display
+    /// must discard it. The UI knows this, but only the UI enforced it — a
+    /// global hotkey goes straight to the recorder and would happily record a
+    /// stale region against the wrong screen.
+    pub fn apply_config(&mut self, cfg: RecordingConfig) {
+        let keep = cfg.mode == "region"
+            && self
+                .region
+                .is_some_and(|r| r.monitor_index == cfg.monitor_index);
+        if !keep {
+            self.region = None;
+        }
+        self.config = cfg;
+    }
+}
+
 pub struct RecorderHandle(pub Arc<Mutex<Recorder>>);
 
 impl RecorderHandle {
