@@ -56,9 +56,28 @@ Run the logic tests (both backends' arg builders, region rounding, device parsin
 cd src-tauri && cargo test
 ```
 
+## Driving a dev build from the command line
+
+`cargo tauri dev` opens a JSON control socket on `127.0.0.1:7333`, with `scripts/recapctl` as its client. It exists so a developer — or an agent — can drive and inspect the app without a mouse:
+
+```
+recapctl state                              # recorder status, config, region, screens
+recapctl windows                            # open window labels
+recapctl eval editor 'shapes.length'        # JS inside any window, result returned
+recapctl eval main 'document.title'
+recapctl invoke still                       # still | grab_text | record_start | record_stop | pause
+recapctl shot editor /tmp/ed.png            # screenshot cropped to that window
+recapctl shot screen /tmp/full.png
+```
+
+`shot` reads the window's own reported bounds and crops a real `screencapture`, so it shows what is actually composited rather than a webview's idea of itself.
+
+> **This is a remote-code-execution hole by design** — `eval` runs arbitrary JS in a privileged webview. It is compiled only under `debug_assertions` and bound to loopback, so it does not exist in a release build. Do not lift that gate.
+
 ## Layout
 
 ```
+scripts/recapctl         CLI for the dev control socket
 src/                     vanilla HTML/CSS/JS, no Node needed (withGlobalTauri)
   index.html/main.js     main control window
   overlay.html/.js       transparent per-monitor overlay for region drag-select
@@ -70,6 +89,7 @@ src-tauri/src/
   still.rs               screenshots: full-display grab, then crop to region
   editor.rs              annotation editor plumbing: load/save/copy, window
   ocr.rs                 text grab: Vision on macOS, reading-order sort
+  devctl.rs              debug-only control socket (never in release builds)
   capture/
     mod.rs               CaptureBackend trait, shared helpers, backend selection
     macos.rs             avfoundation + VideoToolbox

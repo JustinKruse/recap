@@ -48,6 +48,7 @@ const els = {
 
 const ENCODER_LABELS = {
   auto: "Auto (best available)",
+  h264_videotoolbox: "Apple VideoToolbox",
   h264_nvenc: "NVIDIA NVENC",
   h264_amf: "AMD AMF",
   h264_qsv: "Intel QuickSync",

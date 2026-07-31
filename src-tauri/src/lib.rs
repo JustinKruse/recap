@@ -1,4 +1,7 @@
 mod capture;
+// Debug-only: exposes an eval-anything socket. Must never ship in release.
+#[cfg(debug_assertions)]
+mod devctl;
 mod editor;
 mod ffmpeg;
 mod ocr;
@@ -220,7 +223,7 @@ async fn grab_text(app: tauri::AppHandle, cfg: RecordingConfig) -> Result<ocr::O
 /// Shared by the button and the hotkey. The screenshot is a means to an end, so
 /// it goes to a scratch file and is deleted after — the user asked for text,
 /// not another PNG in their folder.
-fn read_screen_text(app: &tauri::AppHandle) -> Result<ocr::OcrResult, String> {
+pub(crate) fn read_screen_text(app: &tauri::AppHandle) -> Result<ocr::OcrResult, String> {
     let shot = still::capture_temp(app)?;
     let result = ocr::recognize(&shot);
     let _ = std::fs::remove_file(&shot);
@@ -357,6 +360,9 @@ pub fn run() {
             reveal_path
         ])
         .setup(|app| {
+            #[cfg(debug_assertions)]
+            devctl::start(app.handle());
+
             // ---- overlay -> rust events -----------------------------------
             let handle = app.handle().clone();
             app.listen_any("region-selected", move |event| {

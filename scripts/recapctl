@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""recapctl — drive and inspect a running `cargo tauri dev` Recap.
+
+The app opens a debug-only JSON socket on 127.0.0.1:7333 (see devctl.rs, which
+is compiled out of release builds). This is the client for it.
+
+    recapctl ping
+    recapctl state
+    recapctl windows
+    recapctl bounds editor
+    recapctl eval editor 'shapes.length'
+    recapctl eval main   'document.querySelector("#status-pill").textContent'
+    recapctl invoke still
+    recapctl invoke grab_text
+    recapctl shot editor /tmp/ed.png     # cropped to that window
+    recapctl shot screen /tmp/full.png   # whole display
+
+`shot` grabs the display with screencapture and crops to the window's own
+reported bounds, so it captures what is actually composited on screen rather
+than a webview's idea of itself.
+"""
+
+import json
+import os
+import socket
+import subprocess
+import sys
+
+HOST, PORT = "127.0.0.1", 7333
+FFMPEG = os.path.join(os.path.dirname(__file__), "..", "vendor", "ffmpeg")
+
+
+def request(payload, timeout=20.0):
+    try:
+        with socket.create_connection((HOST, PORT), timeout=timeout) as s:
+            s.settimeout(timeout)
+            s.sendall((json.dumps(payload) + "\n").encode())
+            buf = b""
+            while not buf.endswith(b"\n"):
+                chunk = s.recv(65536)
+                if not chunk:
+                    break
+                buf += chunk
+    except (ConnectionRefusedError, OSError) as e:
+        die(f"cannot reach Recap on {HOST}:{PORT} ({e}). Is `cargo tauri dev` running?")
+    try:
+        return json.loads(buf.decode())
+    except json.JSONDecodeError:
+        die(f"unreadable reply: {buf[:400]!r}")
+
+
+def die(msg, code=1):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def emit(value):
+    print(json.dumps(value, indent=2) if not isinstance(value, str) else value)
+    # A reported error is a failed command, so exit non-zero for `&&` chaining.
+    if isinstance(value, dict) and "error" in value:
+        sys.exit(1)
+
+
+def shot(target, out):
+    if target == "screen":
+        run(["/usr/sbin/screencapture", "-x", "-D", "1", out])
+        emit({"saved": out, "region": "full display"})
+        return
+
+    b = request({"cmd": "bounds", "window": target})
+    if "error" in b:
+        emit(b)
+    if not b.get("visible"):
+        print(f"note: window `{target}` reports itself hidden", file=sys.stderr)
+    x, y, w, h = b.get("x"), b.get("y"), b.get("width"), b.get("height")
+    if None in (x, y, w, h):
+        die(f"window `{target}` did not report usable bounds: {b}")
+
+    tmp = out + ".full.png"
+    run(["/usr/sbin/screencapture", "-x", "-D", "1", tmp])
+    # Clamp to the captured image so an off-screen window can't produce an
+    # out-of-range crop that ffmpeg refuses outright.
+    run([FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-i", tmp,
+         "-vf", f"crop='min({w},iw-{x})':'min({h},ih-{y})':{x}:{y}", out])
+    os.remove(tmp)
+    emit({"saved": out, "region": f"{w}x{h} at {x},{y}", "scale": b.get("scale")})
+
+
+def run(cmd):
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    if p.returncode != 0:
+        die(f"{os.path.basename(cmd[0])} failed: {p.stderr.strip() or p.returncode}")
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__)
+        return
+    cmd, rest = argv[0], argv[1:]
+
+    if cmd in ("ping", "state", "windows"):
+        emit(request({"cmd": cmd}))
+    elif cmd == "bounds":
+        emit(request({"cmd": "bounds", "window": rest[0] if rest else "main"}))
+    elif cmd == "eval":
+        if len(rest) < 2:
+            die("usage: recapctl eval <window> <js>")
+        emit(request({"cmd": "eval", "window": rest[0], "js": " ".join(rest[1:])}))
+    elif cmd == "invoke":
+        if not rest:
+            die("usage: recapctl invoke <still|grab_text|record_start|record_stop|pause>")
+        emit(request({"cmd": "invoke", "name": rest[0]}, timeout=90.0))
+    elif cmd == "shot":
+        if len(rest) < 2:
+            die("usage: recapctl shot <window|screen> <out.png>")
+        shot(rest[0], rest[1])
+    else:
+        die(f"unknown command `{cmd}` (try --help)")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
