@@ -159,6 +159,21 @@ mod tests {
         assert_eq!(r.text, "above\nbelow");
     }
 
+    /// Bench hook, not a real test: reads whatever image `RECAP_OCR_IMAGE`
+    /// points at and prints the result. Used to measure recognition changes
+    /// against a known-text fixture.
+    ///   RECAP_OCR_IMAGE=x.png cargo test ocr_image_from_env -- --nocapture
+    #[test]
+    fn ocr_image_from_env() {
+        let Ok(p) = std::env::var("RECAP_OCR_IMAGE") else {
+            return;
+        };
+        match recognize(Path::new(&p)) {
+            Ok(r) => println!("---OCR-BEGIN---\n{}\n---OCR-END---", r.text),
+            Err(e) => println!("---OCR-ERROR--- {e}"),
+        }
+    }
+
     #[test]
     fn empty_input_produces_empty_text_not_a_stray_newline() {
         let r = assemble(vec![]);
