@@ -264,8 +264,8 @@ mod tests {
 [AVFoundation indev @ 0x140607b30] [1] Capture screen 0
 [AVFoundation indev @ 0x140607b30] [2] Capture screen 1
 [AVFoundation indev @ 0x140607b30] AVFoundation audio devices:
-[AVFoundation indev @ 0x140607b30] [0] Justin's AirPods Pro #3
-[AVFoundation indev @ 0x140607b30] [1] MacBook Pro Microphone
+[AVFoundation indev @ 0x140607b30] [0] Studio Headphones #3
+[AVFoundation indev @ 0x140607b30] [1] Someone's MacBook Pro Microphone
 "#;
 
     #[test]
@@ -285,8 +285,10 @@ mod tests {
         let (_, audio) = parse_avfoundation_devices(SAMPLE);
         assert_eq!(audio.len(), 2);
         assert_eq!(audio[0].id, "0");
-        assert_eq!(audio[0].label, "Justin's AirPods Pro #3");
+        assert_eq!(audio[0].label, "Studio Headphones #3");
         assert_eq!(audio[1].id, "1");
+        // Apostrophes and other punctuation must survive the parse.
+        assert_eq!(audio[1].label, "Someone's MacBook Pro Microphone");
     }
 
     #[test]

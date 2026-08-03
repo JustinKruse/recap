@@ -138,3 +138,7 @@ src-tauri/src/
 ## Roadmap
 
 Three pillars are done: recording, still capture + annotation editor, and OCR. **Scrolling capture** is the one left, plus: webcam picture-in-picture · system audio · click highlighting · trim-before-save · configurable hotkeys.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
