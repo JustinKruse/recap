@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Cancel in-progress runs for the same branch/PR when new commits land.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # macOS is the platform this app is actually developed and run on, so it
+  # gets the full quality bar: formatting, lints, and tests.
+  macos:
+    name: macOS (fmt, clippy, test)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # Keys on Cargo.lock and covers both the registry/index and target/,
+      # scoped to the src-tauri crate so the windows job's cache stays separate.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: cargo fmt --check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: cargo clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+
+      # Both capture backends' arg builders are pure functions (they only
+      # build Vec<String> command lines) and are unit-tested on every
+      # platform, so no ffmpeg binary or display is required here. See
+      # src-tauri/src/capture/{macos,windows}.rs.
+      - name: cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  # The Windows backend (src-tauri/src/capture/windows.rs) has never been
+  # compiled on real Windows before this workflow existed. This job exists
+  # specifically to prove the crate — including that backend — builds and its
+  # tests pass on the real target, not just that its arg-builder logic is
+  # cross-compiled-in-spirit from a Mac.
+  windows:
+    name: Windows (build, test)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      # Visual Studio Build Tools (MSVC) and WebView2 are preinstalled on
+      # windows-latest runners, which is what Tauri 2 needs to link here.
+      - name: cargo build
+        run: cargo build --manifest-path src-tauri/Cargo.toml
+
+      # No ffmpeg.exe and no display are available or needed: these tests
+      # only build ffmpeg argument vectors (ddagrab/dshow arg construction,
+      # device-name parsing) and never spawn a process or open a window.
+      - name: cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  # The editor is ~700 lines of canvas logic that the Rust tests cannot reach.
+  # This suite drives the real src/editor.js in headless Chrome and is the only
+  # thing pinning the phantom-shape regression, so CI has to actually run it.
+  frontend:
+    name: Frontend (editor regression suite)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run editor regression suite
+        # macOS runners ship Google Chrome preinstalled; the runner script finds
+        # it and drives it headlessly. No npm dependencies.
+        run: node tests/run.js

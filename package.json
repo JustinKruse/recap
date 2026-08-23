@@ -1,0 +1,8 @@
+{
+  "name": "recap-editor-tests",
+  "private": true,
+  "description": "No app build lives here — this just gives `npm test` to the headless-Chrome regression suite for src/editor.js.",
+  "scripts": {
+    "test": "node tests/run.js"
+  }
+}
