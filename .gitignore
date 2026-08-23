@@ -1,4 +1,23 @@
 /src-tauri/target
 /src-tauri/gen
 .DS_Store
+
+# A 45 MB static ffmpeg does not belong in git history, so it stays out and
+# docs/RELEASE.md step 0 says how to repopulate it. It is now a *build input*
+# (bundle.resources copies it into Recap.app/Contents/Resources), so a clone
+# without it fails the bundle step loudly rather than shipping a broken app.
 /vendor/
+
+# Signing material. Never commit these: a leaked Developer ID private key can
+# sign malware as us, and revoking it invalidates every release already shipped.
+*.p12
+*.pem
+*.cer
+*.certSigningRequest
+AuthKey_*.p8
+.env
+.env.local
+
+# Release scratch: notarization upload zips and the notary log.
+/dist/
+notarization.log

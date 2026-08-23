@@ -22,9 +22,31 @@ pub fn quiet_command(program: &Path) -> Command {
     cmd
 }
 
+/// Map the directory holding our executable to the `.app`'s Resources
+/// directory, if we are in fact running from inside a bundle.
+///
+/// The layout is fixed: `Recap.app/Contents/MacOS/Recap` next to
+/// `Recap.app/Contents/Resources/ffmpeg` (see `bundle.resources` in
+/// tauri.conf.json). `locate()` is called from the CLI path too and has no
+/// `AppHandle`, so Tauri's own resource resolver isn't available — the exe path
+/// is the only handle we have on the bundle.
+///
+/// Both path components are checked by name rather than just going up two
+/// levels, so a plain `target/release/recap` doesn't get a phantom
+/// `target/Resources` and skip the dev-tree walk below it.
+#[cfg(target_os = "macos")]
+fn bundle_resource_dir(exe_dir: &Path) -> Option<PathBuf> {
+    let contents = exe_dir.parent()?;
+    if exe_dir.file_name()? != "MacOS" || contents.file_name()? != "Contents" {
+        return None;
+    }
+    Some(contents.join("Resources"))
+}
+
 /// Find ffmpeg. Order: RECAP_FFMPEG, next to the exe, a bundled `ffmpeg/`
-/// folder, a `vendor/` folder anywhere up the tree (how it's found during
-/// `cargo tauri dev`, where the exe sits deep under target/), then PATH.
+/// folder, the macOS `.app` Resources directory, a `vendor/` folder anywhere up
+/// the tree (how it's found during `cargo tauri dev`, where the exe sits deep
+/// under target/), then PATH.
 pub fn locate() -> Option<PathBuf> {
     let names = capture::active().ffmpeg_filenames();
 
@@ -44,6 +66,19 @@ pub fn locate() -> Option<PathBuf> {
                     dir.join("ffmpeg").join("bin").join(name),
                 ];
                 for c in candidates {
+                    if c.is_file() {
+                        return Some(c);
+                    }
+                }
+            }
+            // An installed .app has no source tree above it to walk, so this is
+            // the only branch that finds ffmpeg on a real user's machine. It
+            // must come before the walk: /Applications/Recap.app must never
+            // prefer a stray /Applications/vendor/ffmpeg over its own copy.
+            #[cfg(target_os = "macos")]
+            if let Some(res) = bundle_resource_dir(dir) {
+                for name in names {
+                    let c = res.join(name);
                     if c.is_file() {
                         return Some(c);
                     }
@@ -158,27 +193,6 @@ pub fn run_concat(ff: &Path, list: &Path, out: &Path) -> Result<(), String> {
     }
 }
 
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn concat_line_uses_forward_slashes_and_escapes_quotes() {
-        let line = concat_list_line(Path::new(r"C:\Users\j'k\seg_000.mp4"));
-        assert_eq!(line, "file 'C:/Users/j'\\''k/seg_000.mp4'");
-    }
-
-    #[test]
-    fn software_fallback_is_always_offered() {
-        // Even with no ffmpeg present, libx264 must be in the list so the UI
-        // always has a selectable encoder.
-        let encoders = usable_encoders(Path::new("/nonexistent/ffmpeg"));
-        assert_eq!(encoders, vec!["libx264".to_string()]);
-    }
-}
-
 /// Convert a finished recording to a GIF.
 ///
 /// Two passes on purpose: `palettegen` builds an optimal 256-colour table for
@@ -215,4 +229,53 @@ pub fn to_gif(ff: &Path, src: &Path, out: &Path, fps: u32, width: u32) -> Result
         "GIF export failed: {}",
         err.lines().rev().take(2).collect::<Vec<_>>().join(" ")
     ))
+}
+
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn concat_line_uses_forward_slashes_and_escapes_quotes() {
+        let line = concat_list_line(Path::new(r"C:\Users\j'k\seg_000.mp4"));
+        assert_eq!(line, "file 'C:/Users/j'\\''k/seg_000.mp4'");
+    }
+
+    /// The ship blocker this guards: vendor/ is git-ignored and nowhere near an
+    /// installed .app, so if this mapping is wrong a real install has no
+    /// capture engine at all and every capture fails with "ffmpeg not found".
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn bundle_resources_are_found_from_the_executable() {
+        assert_eq!(
+            bundle_resource_dir(Path::new("/Applications/Recap.app/Contents/MacOS")),
+            Some(PathBuf::from("/Applications/Recap.app/Contents/Resources"))
+        );
+    }
+
+    /// A bare cargo binary must fall through to the dev-tree walk rather than
+    /// claim a bundle two levels up, or `cargo tauri dev` stops finding
+    /// vendor/ffmpeg.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_loose_binary_is_not_mistaken_for_a_bundle() {
+        assert_eq!(
+            bundle_resource_dir(Path::new("/r/src-tauri/target/release")),
+            None
+        );
+        // Right leaf name, wrong grandparent — e.g. a directory literally named
+        // MacOS. Both components have to match.
+        assert_eq!(bundle_resource_dir(Path::new("/r/build/MacOS")), None);
+        assert_eq!(bundle_resource_dir(Path::new("/")), None);
+    }
+
+    #[test]
+    fn software_fallback_is_always_offered() {
+        // Even with no ffmpeg present, libx264 must be in the list so the UI
+        // always has a selectable encoder.
+        let encoders = usable_encoders(Path::new("/nonexistent/ffmpeg"));
+        assert_eq!(encoders, vec!["libx264".to_string()]);
+    }
 }

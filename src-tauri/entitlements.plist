@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for Recap. Applied by `codesign --options runtime
+  --entitlements` to both Recap.app and the ffmpeg it bundles — see docs/RELEASE.md.
+
+  Deliberately short. The hardened runtime is a set of *restrictions*; every
+  entitlement here is a hole punched in it, and notarization review — plus anyone
+  auditing the binary — reads each one as a claim we need it. So the rule applied
+  below is: nothing goes in that hasn't got a concrete caller in this codebase.
+  The equally important half of that is recorded at the bottom, where the
+  entitlements Recap does *not* take are listed with the reason, because the
+  default reflex when signing fails is to paste in the Electron set and move on.
+
+  NOT App Sandbox. Recap uses `macos-private-api` for the transparent overlay
+  window, which already rules out the Mac App Store (see Cargo.toml), and it
+  spawns ffmpeg against arbitrary user-chosen output paths. Direct notarized
+  distribution only, so the sandbox key is absent rather than empty.
+-->
+<plist version="1.0">
+<dict>
+    <!--
+      Microphone. Audio narration is captured by the bundled ffmpeg via its
+      avfoundation input, not by Recap itself, so this has to be granted to both
+      binaries: TCC shows the consent prompt against the responsible process
+      (Recap.app, which is why NSMicrophoneUsageDescription lives in Info.plist),
+      but the entitlement check is per-signature and it is ffmpeg's signature
+      that gets checked when ffmpeg opens the device. Sign the resource with the
+      same entitlements file and both halves line up.
+    -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+</dict>
+<!--
+  Deliberately absent — do not add these back without a concrete failure to point at:
+
+  * com.apple.security.cs.allow-jit
+    Only needed when JavaScript is JIT-compiled inside our own address space.
+    Recap is WKWebView, and WebKit runs JS out-of-process in the system-owned
+    com.apple.WebKit.WebContent, which carries its own entitlements. This is the
+    single most cargo-culted key in Tauri entitlements files; it comes from
+    Electron, which embeds V8 in-process and genuinely does need it.
+
+  * com.apple.security.cs.allow-unsigned-executable-memory
+    Same story, and strictly weaker protection than allow-jit. Nothing here
+    generates code at runtime.
+
+  * com.apple.security.cs.disable-library-validation
+    Would let us load code signed by another Team ID into our process. We load
+    none: `otool -L vendor/ffmpeg` is system dylibs and system frameworks only,
+    and ffmpeg is a *child process* anyway — library validation is a
+    within-process rule, so spawning a differently-signed binary never trips it.
+    If a user points RECAP_FFMPEG at a Homebrew ffmpeg, that dynamically linked
+    mess loads into ffmpeg's process, not ours, and its own signature governs.
+
+  * com.apple.security.cs.allow-dyld-environment-variables
+    Nothing sets DYLD_* on the children; ffmpeg::quiet_command passes the
+    environment through untouched.
+
+  * com.apple.security.automation.apple-events
+    No osascript, no NSAppleScript, no Apple Events sent anywhere. Both
+    subprocesses (bundled ffmpeg, Apple's /usr/sbin/screencapture) are spawned
+    with posix_spawn through std::process::Command.
+
+  * Screen Recording
+    Has no entitlement to grant. It is pure TCC: the user enables Recap under
+    System Settings -> Privacy & Security -> Screen Recording, keyed on the
+    signed bundle identity. This is exactly why a stable Developer ID signature
+    matters for release builds — an ad-hoc signature changes identity on every
+    build and macOS re-prompts, or worse, silently keeps denying.
+
+  * com.apple.security.get-task-allow
+    Debugger attach. Must never be present in a distributed build; notarization
+    rejects it outright. Absent here, and RELEASE.md verifies it stays absent.
+-->
+</plist>
