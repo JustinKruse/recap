@@ -287,10 +287,11 @@ els.snap.addEventListener("click", async () => {
   els.snap.disabled = true;
   await win.hide().catch(() => {});
   try {
+    // capture_still already opens the editor — the Snagit loop lives in Rust so
+    // the button and the hotkey can't drift apart. Opening it again here would
+    // re-fire editor-load and, with unsaved marks, raise a second warning.
     const path = await invoke("capture_still", { cfg: currentConfig() });
     const name = path.split(/[\\/]/).pop();
-    // Capture straight into the editor — that's the Snagit loop.
-    await invoke("open_editor", { path }).catch(() => {});
     toast(`Saved ${name}`, "ok", {
       label: "Open folder",
       onClick: () => invoke("reveal_path", { path }).catch(() => {}),
@@ -299,8 +300,9 @@ els.snap.addEventListener("click", async () => {
     toast(String(e), "error");
   } finally {
     els.snap.disabled = false;
+    // Show the deck again but do NOT focus it: the editor has just opened and
+    // stealing focus back would bury the thing the user is about to annotate.
     await win.show().catch(() => {});
-    await win.setFocus().catch(() => {});
   }
 });
 

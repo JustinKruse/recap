@@ -129,15 +129,18 @@ impl CaptureBackend for MacOs {
         &self,
         _ff: &Path,
         display_index: usize,
+        cursor: bool,
         out: &Path,
     ) -> (PathBuf, Vec<String>) {
-        let args = vec![
-            "-x".into(), // no shutter sound
-            "-C".into(), // include the cursor, matching the recorder's default
+        let mut args = vec!["-x".to_string()]; // no shutter sound
+        if cursor {
+            args.push("-C".into());
+        }
+        args.extend([
             "-D".into(),
             (display_index + 1).to_string(),
             out.display().to_string(),
-        ];
+        ]);
         (PathBuf::from("/usr/sbin/screencapture"), args)
     }
 
@@ -369,6 +372,18 @@ mod tests {
         let r = args.iter().position(|a| a == "-r").expect("has -r");
         assert!(r > i, "-r must be an output option");
         assert_eq!(args[r + 1], "60");
+    }
+
+    #[test]
+    fn stills_include_the_cursor_but_scroll_frames_never_do() {
+        let with = MacOs.still_command(Path::new(""), 0, true, Path::new("/tmp/a.png"));
+        let without = MacOs.still_command(Path::new(""), 0, false, Path::new("/tmp/a.png"));
+        assert!(with.1.iter().any(|a| a == "-C"), "a still should draw the cursor");
+        // Scrolling capture holds the pointer still while the page moves, so a
+        // drawn cursor would be stamped down the stitched image once per frame.
+        assert!(!without.1.iter().any(|a| a == "-C"));
+        // -D is 1-based over displays.
+        assert_eq!(without.1[without.1.len() - 2], "1");
     }
 
     #[test]

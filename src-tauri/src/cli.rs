@@ -151,7 +151,7 @@ fn run(verb: &str, args: &[String]) -> Result<String, String> {
                 r.frames,
                 r.width,
                 r.height,
-                if r.reached_end { "" } else { " (stopped at --max, may be incomplete)" }
+                r.stopped.note(r.frames)
             ))
         }
         "ocr" => {
@@ -198,7 +198,7 @@ fn capture_to(o: &Opts, out: &Path) -> Result<PathBuf, String> {
         out.to_path_buf()
     };
     let ff_arg = ff.clone().unwrap_or_default();
-    let (program, cmd_args) = backend.still_command(&ff_arg, o.display, &raw);
+    let (program, cmd_args) = backend.still_command(&ff_arg, o.display, true, &raw);
     if program.as_os_str().is_empty() {
         return Err(backend.ffmpeg_hint().to_string());
     }

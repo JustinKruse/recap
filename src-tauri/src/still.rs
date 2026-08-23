@@ -82,7 +82,7 @@ fn capture_into(app: &AppHandle, final_path: PathBuf) -> Result<PathBuf, String>
     // ffmpeg is only strictly required for the crop pass and on Windows, but
     // it's needed often enough that a missing binary is worth catching early.
     let ff_for_cmd = ff.clone().unwrap_or_default();
-    let (program, args) = backend.still_command(&ff_for_cmd, display_index, &raw_path);
+    let (program, args) = backend.still_command(&ff_for_cmd, display_index, true, &raw_path);
     if program.as_os_str().is_empty() {
         return Err(backend.ffmpeg_hint().to_string());
     }

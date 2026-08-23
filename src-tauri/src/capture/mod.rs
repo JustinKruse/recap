@@ -78,13 +78,18 @@ pub trait CaptureBackend: Send + Sync {
     /// *not* a `ScreenDevice::id` — the two differ on macOS, where the video
     /// device index also counts cameras.
     ///
+    /// `cursor` bakes the pointer into the image. Wanted for a one-off
+    /// screenshot; never for scrolling capture, where the pointer sits still
+    /// while the content moves and would be stamped down the stitched result
+    /// once per frame.
+    ///
     /// Returns a program plus args rather than an arg vector, because this
     /// isn't necessarily ffmpeg: macOS delegates to Apple's `screencapture`.
     /// Always captures the whole display — cropping to a region happens
     /// afterwards in `still`, so region geometry stays in the one coordinate
     /// space (monitor-relative physical pixels) that the overlay, the
     /// recorder, and this all agree on.
-    fn still_command(&self, ff: &Path, display_index: usize, out: &Path)
+    fn still_command(&self, ff: &Path, display_index: usize, cursor: bool, out: &Path)
         -> (PathBuf, Vec<String>);
 
     /// Build the full ffmpeg argument vector for one recording segment.

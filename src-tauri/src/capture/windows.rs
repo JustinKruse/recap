@@ -95,6 +95,7 @@ impl CaptureBackend for Windows {
         &self,
         ff: &Path,
         display_index: usize,
+        cursor: bool,
         out: &Path,
     ) -> (PathBuf, Vec<String>) {
         let args = vec![
@@ -105,7 +106,10 @@ impl CaptureBackend for Windows {
             "-f".into(),
             "lavfi".into(),
             "-i".into(),
-            format!("ddagrab=output_idx={display_index}:framerate=1"),
+            format!(
+                "ddagrab=output_idx={display_index}:framerate=1:draw_mouse={}",
+                if cursor { 1 } else { 0 }
+            ),
             "-vf".into(),
             "hwdownload,format=bgra".into(),
             "-frames:v".into(),
@@ -205,6 +209,15 @@ mod tests {
 
     fn target(screen_id: u32, region: Option<Region>) -> CaptureTarget {
         CaptureTarget { screen_id, region }
+    }
+
+    #[test]
+    fn still_draw_mouse_follows_the_cursor_flag() {
+        let with = Windows.still_command(Path::new("ffmpeg.exe"), 1, true, Path::new("a.png"));
+        let without = Windows.still_command(Path::new("ffmpeg.exe"), 1, false, Path::new("a.png"));
+        assert!(with.1.join(" ").contains("draw_mouse=1"));
+        assert!(without.1.join(" ").contains("draw_mouse=0"));
+        assert!(without.1.join(" ").contains("output_idx=1"));
     }
 
     #[test]

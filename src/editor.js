@@ -404,7 +404,8 @@ canvas.addEventListener("pointermove", (e) => {
   render();
 });
 
-canvas.addEventListener("pointerup", () => {
+canvas.addEventListener("pointerup", (e) => {
+  if (e.button !== 0) return;
   if (dragFrom) {
     dragFrom = null;
     // Only a move that actually moved something counts as an edit.
@@ -412,15 +413,15 @@ canvas.addEventListener("pointerup", () => {
     return;
   }
   if (!start) return;
-  const shape = buildShape(start, lastPointer);
+  // Read the end point from this event, never from remembered state: a click
+  // with no intervening pointermove would otherwise reuse the *previous*
+  // drag's endpoint and conjure a shape spanning the two.
+  const shape = buildShape(start, toImage(e));
   start = null;
   draft = null;
   if (isTooSmall(shape)) { render(); return; }
   commit(shape);
 });
-
-let lastPointer = { x: 0, y: 0 };
-canvas.addEventListener("pointermove", (e) => { lastPointer = toImage(e); });
 
 function buildShape(a, b) {
   if (tool === "arrow" || tool === "line") {

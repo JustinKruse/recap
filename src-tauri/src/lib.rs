@@ -265,11 +265,11 @@ async fn capture_scrolling(app: tauri::AppHandle, cfg: RecordingConfig) -> Resul
         let _ = w.set_focus();
     }
     let r = result?;
-    if !r.reached_end {
+    if r.stopped != scroll::StopReason::ReachedEnd {
         let _ = app.emit(
             "recording-error",
             serde_json::json!({
-                "message": format!("Stopped after {} frames — the page may be longer than that.", r.frames),
+                "message": format!("Saved, but incomplete{}", r.stopped.note(r.frames)),
                 "log": ""
             }),
         );

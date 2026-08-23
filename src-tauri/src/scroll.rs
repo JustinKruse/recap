@@ -42,9 +42,35 @@ pub struct ScrollResult {
     pub frames: usize,
     pub width: u32,
     pub height: u32,
-    /// True if capture stopped because the page stopped moving (the good case)
-    /// rather than because it hit `max_frames`.
-    pub reached_end: bool,
+    /// Why the capture stopped. Callers phrase their message from this — an
+    /// alignment failure and hitting the frame cap are very different problems
+    /// and used to be reported identically.
+    pub stopped: StopReason,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StopReason {
+    /// The page stopped moving. The good case: we reached the bottom.
+    ReachedEnd,
+    /// Ran out of frames before the page ran out of content.
+    FrameLimit,
+    /// Two consecutive frames wouldn't align. Stopping beats guessing an
+    /// offset and baking a visible seam into the result.
+    LostAlignment,
+}
+
+impl StopReason {
+    pub fn note(&self, frames: usize) -> String {
+        match self {
+            StopReason::ReachedEnd => String::new(),
+            StopReason::FrameLimit => format!(
+                " (stopped at the {frames}-frame limit — the page is probably longer)"
+            ),
+            StopReason::LostAlignment => format!(
+                " (stopped after {frames} frames: the content stopped lining up)"
+            ),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +131,9 @@ fn find_shift(a: &[[u8; SAMPLES]], b: &[[u8; SAMPLES]], min_overlap: usize) -> O
             n += 1;
         }
         let cost = sum / n.max(1) as f32;
-        if best.is_none_or(|(_, c)| cost < c) {
+        // map_or, not is_none_or: the latter needs Rust 1.82 and Cargo.toml
+        // promises 1.77.2 — which cargo honours when resolving dependencies.
+        if best.map_or(true, |(_, c)| cost < c) {
             best = Some((shift, cost));
         }
     }
@@ -161,6 +189,38 @@ mod input {
         CGEvent::new(None).map(|e| CGEvent::location(Some(&e)))
     }
 
+    /// Convert a physical, display-relative pixel to the global *point* space
+    /// CGEvent works in.
+    ///
+    /// These are only the same thing on a single non-Retina display, which is
+    /// why the naive version appeared to work: on a Retina screen the pointer
+    /// landed at twice the intended offset, and on a second display it landed
+    /// on the wrong screen entirely. The ratio is calibrated from a real
+    /// screenshot rather than a display-mode query, because mode queries report
+    /// points for scaled Retina modes and would reintroduce the same error.
+    pub fn global_point(display_index: usize, physical_width: u32, x: u32, y: u32) -> CGPoint {
+        use objc2_core_graphics::{CGDirectDisplayID, CGDisplayBounds, CGGetActiveDisplayList};
+        let mut ids = [0 as CGDirectDisplayID; 16];
+        let mut count: u32 = 0;
+        unsafe {
+            CGGetActiveDisplayList(ids.len() as u32, ids.as_mut_ptr(), &mut count);
+        }
+        if count == 0 {
+            return CGPoint { x: x as f64, y: y as f64 };
+        }
+        let idx = display_index.min(count as usize - 1);
+        let bounds = CGDisplayBounds(ids[idx]);
+        let scale = if bounds.size.width > 0.0 {
+            physical_width as f64 / bounds.size.width
+        } else {
+            1.0
+        };
+        CGPoint {
+            x: bounds.origin.x + x as f64 / scale,
+            y: bounds.origin.y + y as f64 / scale,
+        }
+    }
+
     pub fn move_cursor(p: CGPoint) {
         // Scroll events are delivered to whatever is under the pointer, so the
         // pointer has to be inside the thing we want to scroll.
@@ -195,6 +255,9 @@ mod input {
     pub fn cursor_position() -> Option<CGPoint> {
         None
     }
+    pub fn global_point(_display: usize, _physical_width: u32, x: u32, y: u32) -> CGPoint {
+        CGPoint { x: x as f64, y: y as f64 }
+    }
     pub fn move_cursor(_p: CGPoint) {}
     pub fn scroll_by(_dy: i32) {}
 }
@@ -203,10 +266,16 @@ mod input {
 
 /// Grab one frame of the region, cropping in memory rather than shelling out to
 /// ffmpeg for every frame.
-fn grab(ff: Option<&Path>, opts: &ScrollOptions, scratch: &Path) -> Result<RgbaImage, String> {
+fn grab(
+    ff: Option<&Path>,
+    opts: &ScrollOptions,
+    scratch: &Path,
+) -> Result<(RgbaImage, u32), String> {
     let backend = crate::capture::active();
     let ff_arg = ff.map(|p| p.to_path_buf()).unwrap_or_default();
-    let (program, args) = backend.still_command(&ff_arg, opts.display, scratch);
+    // Never the cursor: it would sit still while the page moves and get
+    // stamped into the stitched image once per frame.
+    let (program, args) = backend.still_command(&ff_arg, opts.display, false, scratch);
     if program.as_os_str().is_empty() {
         return Err(backend.ffmpeg_hint().to_string());
     }
@@ -218,10 +287,10 @@ fn grab(ff: Option<&Path>, opts: &ScrollOptions, scratch: &Path) -> Result<RgbaI
     if x >= fw || y >= fh {
         return Err("region is outside the display".into());
     }
-    Ok(full
-        .view(x, y, w.min(fw - x), h.min(fh - y))
-        .to_image()
-        .into())
+    Ok((
+        full.view(x, y, w.min(fw - x), h.min(fh - y)).to_image(),
+        fw,
+    ))
 }
 
 pub fn capture(ff: Option<&Path>, opts: &ScrollOptions, out: &Path) -> Result<ScrollResult, String> {
@@ -240,38 +309,46 @@ pub fn capture(ff: Option<&Path>, opts: &ScrollOptions, out: &Path) -> Result<Sc
 
     let scratch = std::env::temp_dir().join(format!("recap-scroll-{}.png", std::process::id()));
     let restore = input::cursor_position();
-    input::move_cursor(objc_point(
-        (rx + rw / 2) as f64,
-        (ry + rh / 2) as f64,
-    ));
-    std::thread::sleep(std::time::Duration::from_millis(120));
 
     let mut frames: Vec<RgbaImage> = Vec::new();
     let mut sigs: Vec<Vec<[u8; SAMPLES]>> = Vec::new();
     let mut shifts: Vec<usize> = Vec::new();
-    let mut reached_end = false;
+    let mut stopped = StopReason::FrameLimit;
 
     let result = (|| -> Result<(), String> {
+        // A throwaway grab first, purely to learn the display's real pixel
+        // width so the pointer can be placed correctly. The pointer has to be
+        // in position *before* the first frame we keep, because moving it over
+        // the page can trigger hover styling that would differ between frame 0
+        // and frame 1 and confuse alignment.
+        let (_, physical_width) = grab(ff, opts, &scratch)?;
+        input::move_cursor(input::global_point(
+            opts.display,
+            physical_width,
+            rx + rw / 2,
+            ry + rh / 2,
+        ));
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
         for i in 0..opts.max_frames {
-            let frame = grab(ff, opts, &scratch)?;
+            let (frame, _) = grab(ff, opts, &scratch)?;
             let sig = signatures(&frame);
 
             if let Some(prev) = sigs.last() {
                 if looks_identical(prev, &sig) {
-                    reached_end = true; // page didn't move: we're at the bottom
+                    stopped = StopReason::ReachedEnd; // page didn't move
                     break;
                 }
                 match find_shift(prev, &sig, min_overlap) {
                     Some((shift, _)) => shifts.push(shift),
                     None => {
-                        // Nothing matched. Better to stop with a correct image
-                        // than to guess an offset and emit a visible seam.
                         if i == 1 {
                             return Err(
                                 "the region didn't scroll — is the pointer over a scrollable area?"
                                     .into(),
                             );
                         }
+                        stopped = StopReason::LostAlignment;
                         break;
                     }
                 }
@@ -308,18 +385,10 @@ pub fn capture(ff: Option<&Path>, opts: &ScrollOptions, out: &Path) -> Result<Sc
         frames: frames.len(),
         width,
         height,
-        reached_end,
+        stopped,
     })
 }
 
-#[cfg(target_os = "macos")]
-fn objc_point(x: f64, y: f64) -> objc2_core_foundation::CGPoint {
-    objc2_core_foundation::CGPoint { x, y }
-}
-#[cfg(not(target_os = "macos"))]
-fn objc_point(x: f64, y: f64) -> input::CGPoint {
-    input::CGPoint { x, y }
-}
 
 #[cfg(test)]
 mod tests {
