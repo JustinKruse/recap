@@ -15,6 +15,9 @@ const $ = (id) => document.getElementById(id);
 const els = {
   statusPill: $("status-pill"),
   banner: $("ffmpeg-banner"),
+  permBanner: $("permission-banner"),
+  grantAccess: $("btn-grant-access"),
+  openSettings: $("btn-open-settings"),
   modeFullscreen: $("mode-fullscreen"),
   modeRegion: $("mode-region"),
   regionRow: $("region-row"),
@@ -138,6 +141,49 @@ function toast(message, kind = "ok", action = null) {
   toastTimeout = setTimeout(() => (els.toast.hidden = true), kind === "error" ? 12000 : 7000);
 }
 
+// ---- screen recording permission (macOS) --------------------------------------
+//
+// Preflighting never prompts, so it's safe to run on every launch and every
+// time the window regains focus — that's the only way the banner clears
+// itself after a grant in System Settings without the user having to guess
+// that a restart fixed it.
+
+async function checkScreenRecordingPermission() {
+  let granted;
+  try {
+    granted = await invoke("permission_status");
+  } catch (e) {
+    // A rejection here (vs. just "false") means the command itself couldn't
+    // run — surface it rather than silently leaving the banner in whatever
+    // state it was last in, which is exactly how a capability gap hid before.
+    console.error("permission_status failed:", e);
+    return;
+  }
+  els.permBanner.hidden = granted;
+}
+
+els.grantAccess.addEventListener("click", async () => {
+  els.grantAccess.disabled = true;
+  try {
+    // Prompts once if TCC has no decision yet for this binary identity; if
+    // already denied, macOS won't re-prompt and this just reports that.
+    await invoke("request_screen_recording_access");
+  } catch (e) {
+    toast(String(e), "error");
+  } finally {
+    els.grantAccess.disabled = false;
+    await checkScreenRecordingPermission();
+  }
+});
+
+els.openSettings.addEventListener("click", async () => {
+  try {
+    await invoke("open_screen_recording_settings");
+  } catch (e) {
+    toast(String(e), "error");
+  }
+});
+
 // ---- config ------------------------------------------------------------------
 
 function currentConfig() {
@@ -172,6 +218,7 @@ async function init() {
   if (!info.ffmpegPath) {
     els.banner.hidden = false;
   }
+  els.permBanner.hidden = !!info.screenRecordingGranted;
 
   els.monitor.innerHTML = "";
   info.monitors.forEach((m) => {
@@ -483,5 +530,14 @@ listen("status", ({ payload }) => {
   if (s === "finalizing") setState("finalizing");
   if (s === "idle" && uiState === "finalizing") setState("idle");
 });
+
+// Re-check permission when the window regains focus — the one path that
+// clears the banner after a grant in System Settings without a restart.
+tauri.window
+  .getCurrentWindow()
+  .onFocusChanged(({ payload: focused }) => {
+    if (focused) checkScreenRecordingPermission();
+  })
+  .catch((e) => console.error("focus listener failed to register:", e));
 
 init();

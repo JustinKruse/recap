@@ -63,12 +63,12 @@ impl StopReason {
     pub fn note(&self, frames: usize) -> String {
         match self {
             StopReason::ReachedEnd => String::new(),
-            StopReason::FrameLimit => format!(
-                " (stopped at the {frames}-frame limit — the page is probably longer)"
-            ),
-            StopReason::LostAlignment => format!(
-                " (stopped after {frames} frames: the content stopped lining up)"
-            ),
+            StopReason::FrameLimit => {
+                format!(" (stopped at the {frames}-frame limit — the page is probably longer)")
+            }
+            StopReason::LostAlignment => {
+                format!(" (stopped after {frames} frames: the content stopped lining up)")
+            }
         }
     }
 }
@@ -114,7 +114,11 @@ fn row_distance(a: &[u8; SAMPLES], b: &[u8; SAMPLES]) -> f32 {
 ///
 /// Returns `None` when nothing lines up well enough — a hard cut, a page that
 /// jumped somewhere unrelated, or content that changed completely.
-fn find_shift(a: &[[u8; SAMPLES]], b: &[[u8; SAMPLES]], min_overlap: usize) -> Option<(usize, f32)> {
+fn find_shift(
+    a: &[[u8; SAMPLES]],
+    b: &[[u8; SAMPLES]],
+    min_overlap: usize,
+) -> Option<(usize, f32)> {
     let h = a.len().min(b.len());
     if h <= min_overlap {
         return None;
@@ -206,7 +210,10 @@ mod input {
             CGGetActiveDisplayList(ids.len() as u32, ids.as_mut_ptr(), &mut count);
         }
         if count == 0 {
-            return CGPoint { x: x as f64, y: y as f64 };
+            return CGPoint {
+                x: x as f64,
+                y: y as f64,
+            };
         }
         let idx = display_index.min(count as usize - 1);
         let bounds = CGDisplayBounds(ids[idx]);
@@ -224,7 +231,8 @@ mod input {
     pub fn move_cursor(p: CGPoint) {
         // Scroll events are delivered to whatever is under the pointer, so the
         // pointer has to be inside the thing we want to scroll.
-        if let Some(e) = CGEvent::new_mouse_event(None, CGEventType::MouseMoved, p, CGMouseButton::Left)
+        if let Some(e) =
+            CGEvent::new_mouse_event(None, CGEventType::MouseMoved, p, CGMouseButton::Left)
         {
             CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&e));
         }
@@ -233,14 +241,9 @@ mod input {
     /// Negative `dy` scrolls the content down (the same sign convention as a
     /// physical wheel pushed away from you with natural scrolling off).
     pub fn scroll_by(dy: i32) {
-        if let Some(e) = CGEvent::new_scroll_wheel_event2(
-            None,
-            CGScrollEventUnit::Pixel,
-            1,
-            dy,
-            0,
-            0,
-        ) {
+        if let Some(e) =
+            CGEvent::new_scroll_wheel_event2(None, CGScrollEventUnit::Pixel, 1, dy, 0, 0)
+        {
             CGEvent::post(CGEventTapLocation::HIDEventTap, Some(&e));
         }
     }
@@ -256,7 +259,10 @@ mod input {
         None
     }
     pub fn global_point(_display: usize, _physical_width: u32, x: u32, y: u32) -> CGPoint {
-        CGPoint { x: x as f64, y: y as f64 }
+        CGPoint {
+            x: x as f64,
+            y: y as f64,
+        }
     }
     pub fn move_cursor(_p: CGPoint) {}
     pub fn scroll_by(_dy: i32) {}
@@ -287,13 +293,14 @@ fn grab(
     if x >= fw || y >= fh {
         return Err("region is outside the display".into());
     }
-    Ok((
-        full.view(x, y, w.min(fw - x), h.min(fh - y)).to_image(),
-        fw,
-    ))
+    Ok((full.view(x, y, w.min(fw - x), h.min(fh - y)).to_image(), fw))
 }
 
-pub fn capture(ff: Option<&Path>, opts: &ScrollOptions, out: &Path) -> Result<ScrollResult, String> {
+pub fn capture(
+    ff: Option<&Path>,
+    opts: &ScrollOptions,
+    out: &Path,
+) -> Result<ScrollResult, String> {
     let (rx, ry, rw, rh) = opts.region;
     if rw < 32 || rh < 64 {
         return Err("region is too small to scroll-capture".into());
@@ -389,7 +396,6 @@ pub fn capture(ff: Option<&Path>, opts: &ScrollOptions, out: &Path) -> Result<Sc
     })
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,7 +436,11 @@ mod tests {
 
     #[test]
     fn unrelated_frames_do_not_produce_a_confident_alignment() {
-        let a = signatures(&RgbaImage::from_pixel(200, 400, image::Rgba([0, 0, 0, 255])));
+        let a = signatures(&RgbaImage::from_pixel(
+            200,
+            400,
+            image::Rgba([0, 0, 0, 255]),
+        ));
         let mut noise = RgbaImage::new(200, 400);
         for y in 0..400u32 {
             for x in 0..200u32 {

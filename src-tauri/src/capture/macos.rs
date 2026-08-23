@@ -44,7 +44,9 @@ pub(crate) fn parse_avfoundation_devices(
         }
         // Take the LAST bracketed group as the index — the log prefix
         // `[AVFoundation indev @ 0x..]` also uses brackets.
-        let Some(open) = line.rfind('[') else { continue };
+        let Some(open) = line.rfind('[') else {
+            continue;
+        };
         let Some(close_rel) = line[open..].find(']') else {
             continue;
         };
@@ -167,7 +169,11 @@ impl CaptureBackend for MacOs {
             "-f".into(),
             "avfoundation".into(),
             "-capture_cursor".into(),
-            if cfg.capture_cursor { "1".into() } else { "0".into() },
+            if cfg.capture_cursor {
+                "1".into()
+            } else {
+                "0".into()
+            },
             "-capture_mouse_clicks".into(),
             "0".into(),
             "-i".into(),
@@ -277,8 +283,14 @@ mod tests {
         assert_eq!(
             screens,
             vec![
-                ScreenDevice { id: 1, label: "Capture screen 0".into() },
-                ScreenDevice { id: 2, label: "Capture screen 1".into() },
+                ScreenDevice {
+                    id: 1,
+                    label: "Capture screen 0".into()
+                },
+                ScreenDevice {
+                    id: 2,
+                    label: "Capture screen 1".into()
+                },
             ]
         );
     }
@@ -378,7 +390,10 @@ mod tests {
     fn stills_include_the_cursor_but_scroll_frames_never_do() {
         let with = MacOs.still_command(Path::new(""), 0, true, Path::new("/tmp/a.png"));
         let without = MacOs.still_command(Path::new(""), 0, false, Path::new("/tmp/a.png"));
-        assert!(with.1.iter().any(|a| a == "-C"), "a still should draw the cursor");
+        assert!(
+            with.1.iter().any(|a| a == "-C"),
+            "a still should draw the cursor"
+        );
         // Scrolling capture holds the pointer still while the page moves, so a
         // drawn cursor would be stamped down the stitched image once per frame.
         assert!(!without.1.iter().any(|a| a == "-C"));

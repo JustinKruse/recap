@@ -72,8 +72,11 @@ pub fn recognize(path: &Path) -> Result<OcrResult, String> {
     let lines = unsafe {
         let url = NSURL::fileURLWithPath(&NSString::from_str(path_str));
         let options = NSDictionary::new();
-        let handler =
-            VNImageRequestHandler::initWithURL_options(VNImageRequestHandler::alloc(), &url, &options);
+        let handler = VNImageRequestHandler::initWithURL_options(
+            VNImageRequestHandler::alloc(),
+            &url,
+            &options,
+        );
 
         let request = VNRecognizeTextRequest::new();
         // Accurate is the slower neural path; on a screenshot of UI text the
@@ -144,7 +147,11 @@ mod tests {
 
     #[test]
     fn lines_are_sorted_top_to_bottom() {
-        let r = assemble(vec![line("third", 0.1, 0.9), line("first", 0.1, 0.1), line("second", 0.1, 0.5)]);
+        let r = assemble(vec![
+            line("third", 0.1, 0.9),
+            line("first", 0.1, 0.1),
+            line("second", 0.1, 0.5),
+        ]);
         assert_eq!(r.text, "first\nsecond\nthird");
     }
 

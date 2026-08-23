@@ -4,7 +4,7 @@
 //! whole payload is one small struct, and a bad or missing file must degrade to
 //! defaults rather than stop the app from starting.
 
-use crate::recorder::{RecorderHandle, RecordingConfig};
+use crate::recorder::{lock_recovering, RecorderHandle, RecordingConfig};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -40,8 +40,8 @@ pub fn load() -> Option<RecordingConfig> {
 pub fn save_debounced(state: &RecorderHandle) {
     let Some(pending) = PENDING.get() else { return };
     {
-        let cfg = state.0.lock().unwrap().config.clone();
-        *pending.lock().unwrap() = Some(cfg);
+        let cfg = state.lock().config.clone();
+        *lock_recovering(pending) = Some(cfg);
     }
     let mine = GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
     std::thread::spawn(move || {
@@ -49,7 +49,7 @@ pub fn save_debounced(state: &RecorderHandle) {
         if GENERATION.load(Ordering::Relaxed) != mine {
             return; // superseded by a newer change
         }
-        let Some(cfg) = PENDING.get().and_then(|p| p.lock().unwrap().clone()) else {
+        let Some(cfg) = PENDING.get().and_then(|p| lock_recovering(p).clone()) else {
             return;
         };
         write(&cfg);
@@ -58,7 +58,7 @@ pub fn save_debounced(state: &RecorderHandle) {
 
 /// Write immediately, for shutdown where there's no time to debounce.
 pub fn save_now(state: &RecorderHandle) {
-    let cfg = state.0.lock().unwrap().config.clone();
+    let cfg = state.lock().config.clone();
     write(&cfg);
 }
 

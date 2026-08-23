@@ -85,7 +85,11 @@ pub async fn save_image_as(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Recap.png".into());
 
-    let mut dialog = app.dialog().file().set_file_name(&name).add_filter("PNG", &["png"]);
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_file_name(&name)
+        .add_filter("PNG", &["png"]);
     if let Some(d) = dir {
         dialog = dialog.set_directory(d);
     }
@@ -168,8 +172,10 @@ mod tests {
 
     #[test]
     fn urlencode_escapes_characters_that_would_break_a_query_string() {
-        assert_eq!(urlencode("/Users/j/My Shots/a#1.png"),
-                   "%2FUsers%2Fj%2FMy%20Shots%2Fa%231.png");
+        assert_eq!(
+            urlencode("/Users/j/My Shots/a#1.png"),
+            "%2FUsers%2Fj%2FMy%20Shots%2Fa%231.png"
+        );
         assert_eq!(urlencode("plain-name_1.png"), "plain-name_1.png");
     }
 

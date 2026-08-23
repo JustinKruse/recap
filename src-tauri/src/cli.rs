@@ -88,7 +88,11 @@ fn parse(args: &[String]) -> Result<Opts, String> {
                 let raw = it.next().ok_or("--region needs X,Y,W,H")?;
                 let n: Vec<i64> = raw
                     .split(',')
-                    .map(|p| p.trim().parse::<i64>().map_err(|_| "--region wants numbers"))
+                    .map(|p| {
+                        p.trim()
+                            .parse::<i64>()
+                            .map_err(|_| "--region wants numbers")
+                    })
                     .collect::<Result<_, _>>()?;
                 let [x, y, w, h] = n[..] else {
                     return Err("--region wants exactly X,Y,W,H".into());
@@ -96,7 +100,9 @@ fn parse(args: &[String]) -> Result<Opts, String> {
                 if w <= 0 || h <= 0 {
                     return Err("--region width and height must be positive".into());
                 }
-                o.region = Some(capture::sanitize_region(x as i32, y as i32, w as u32, h as u32));
+                o.region = Some(capture::sanitize_region(
+                    x as i32, y as i32, w as u32, h as u32,
+                ));
             }
             "--step" => {
                 o.step = it
@@ -159,10 +165,8 @@ fn run(verb: &str, args: &[String]) -> Result<String, String> {
             let (image, scratch) = match o.positional.first() {
                 Some(p) => (PathBuf::from(p), false),
                 None => {
-                    let tmp = std::env::temp_dir().join(format!(
-                        "recap-cli-{}.png",
-                        std::process::id()
-                    ));
+                    let tmp =
+                        std::env::temp_dir().join(format!("recap-cli-{}.png", std::process::id()));
                     (capture_to(&o, &tmp)?, true)
                 }
             };
@@ -189,7 +193,8 @@ fn capture_to(o: &Opts, out: &Path) -> Result<PathBuf, String> {
     let backend = capture::active();
     let ff = ffmpeg::locate();
     if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        std::fs::create_dir_all(dir)
+            .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     }
 
     let raw = if o.region.is_some() {

@@ -89,8 +89,13 @@ pub trait CaptureBackend: Send + Sync {
     /// afterwards in `still`, so region geometry stays in the one coordinate
     /// space (monitor-relative physical pixels) that the overlay, the
     /// recorder, and this all agree on.
-    fn still_command(&self, ff: &Path, display_index: usize, cursor: bool, out: &Path)
-        -> (PathBuf, Vec<String>);
+    fn still_command(
+        &self,
+        ff: &Path,
+        display_index: usize,
+        cursor: bool,
+        out: &Path,
+    ) -> (PathBuf, Vec<String>);
 
     /// Build the full ffmpeg argument vector for one recording segment.
     /// `encoder` is already resolved — never "auto".

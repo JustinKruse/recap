@@ -32,6 +32,8 @@ Both backends compile on both platforms — they only build argument vectors, no
 
 macOS gates screen capture behind TCC. The **app binary** needs Screen Recording permission — grant it in System Settings → Privacy & Security → Screen Recording. During `cargo tauri dev` the permission attaches to the dev binary, which changes identity on rebuild, so macOS may re-prompt.
 
+When the app starts, if you haven't granted permission, a banner appears at the top of the main window. The banner offers two buttons: one to request permission (which may show a system dialog on first request), and one to open System Settings directly. On Windows, no permissions are required.
+
 Note that a capture producing no output is *not* reliable evidence of a permission problem — see the frame-rate note below, which presents identically. To tell them apart, run `screencapture -x -D 1 /tmp/t.png`: if that yields a real image, capture is permitted and the fault is elsewhere.
 
 ### Never set `-framerate` on an AVFoundation screen input
@@ -123,7 +125,7 @@ src-tauri/src/
 
 ## Known limitations (v0.1)
 
-- **Windows side is still uncompiled.** The cross-platform refactor keeps its arg-building unit-tested, but no one has run it on real Windows hardware yet. Its still-capture path in particular has never executed.
+- **Windows GUI is untested on real hardware.** The crate compiles and its unit tests (arg builders, device parsing) pass in CI on Windows, but no one has run the GUI or capture on actual Windows hardware yet. Still capture, GIF export and the full UI remain unverified.
 - **Still capture hides the main window and waits 220 ms** before grabbing. That delay is a guess at compositor repaint time, not a measured value; if Recap shows up in its own screenshot, raise it.
 - **OCR accuracy drops on small text.** Reading a whole 3440×1440 screen, Vision returned `Snacit` for *Snagit*, `clioboard` for *clipboard* and `10.65 GE` for *10.65 GB* — UI text at that scale is near its limit. Region grabs of larger text are markedly better. Upscaling the scratch PNG ~2× before recognition is the obvious next lever, but it hasn't been measured, so it isn't in yet.
 - **OCR is macOS-only.** Windows returns an explicit error; `Windows.Media.Ocr` needs a language pack and a WinRT binding that aren't wired up.

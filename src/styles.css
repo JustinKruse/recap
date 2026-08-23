@@ -85,6 +85,13 @@ body[data-state="finalizing"] .pill { color: var(--muted); }
 }
 .banner code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
 
+.banner-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.banner-actions .ghost-btn:first-child { border-color: var(--red-deep); }
+
 /* ---- settings groups ----------------------------------------------------- */
 
 .deck {

@@ -27,27 +27,33 @@ const STILL_TIMEOUT: Duration = Duration::from_secs(10);
 pub fn capture(app: &AppHandle) -> Result<PathBuf, String> {
     let output_dir = {
         let handle = app.state::<RecorderHandle>();
-        let r = handle.0.lock().unwrap();
+        let r = handle.lock();
         r.config.output_dir.clone()
     };
     if output_dir.is_empty() {
         return Err("Choose an output folder first.".into());
     }
     let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-    capture_into(app, PathBuf::from(output_dir).join(format!("Recap_{stamp}.png")))
+    capture_into(
+        app,
+        PathBuf::from(output_dir).join(format!("Recap_{stamp}.png")),
+    )
 }
 
 /// Capture to a scratch file. Text grab wants pixels to read, not a saved
 /// screenshot, so this deliberately keeps the user's output folder clean.
 pub fn capture_temp(app: &AppHandle) -> Result<PathBuf, String> {
     let stamp = chrono::Local::now().format("%Y%m%d%H%M%S%3f").to_string();
-    capture_into(app, std::env::temp_dir().join(format!("recap-ocr-{stamp}.png")))
+    capture_into(
+        app,
+        std::env::temp_dir().join(format!("recap-ocr-{stamp}.png")),
+    )
 }
 
 fn capture_into(app: &AppHandle, final_path: PathBuf) -> Result<PathBuf, String> {
     let handle = app.state::<RecorderHandle>();
     let (ff, region, display_index) = {
-        let r = handle.0.lock().unwrap();
+        let r = handle.lock();
         let region = if r.config.mode == "region" {
             r.region
         } else {

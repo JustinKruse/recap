@@ -20,7 +20,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Listener, Manager};
 
 use crate::recorder::RecorderHandle;
-use crate::recorder;
+use crate::recorder::{self, lock_recovering};
 
 const ADDR: &str = "127.0.0.1:7333";
 
@@ -75,7 +75,7 @@ pub fn start(app: &AppHandle) {
         let Some(id) = v.get("id").and_then(Value::as_u64) else {
             return;
         };
-        if let Some(tx) = pending.lock().unwrap().remove(&id) {
+        if let Some(tx) = lock_recovering(&pending).remove(&id) {
             let _ = tx.send(v.get("value").cloned().unwrap_or(Value::Null));
         }
     });
@@ -137,7 +137,7 @@ fn dispatch(app: &AppHandle, req: &Value) -> Value {
 
 fn state(app: &AppHandle) -> Value {
     let handle = app.state::<RecorderHandle>();
-    let r = handle.0.lock().unwrap();
+    let r = handle.lock();
     json!({
         "status": r.status.as_str(),
         "config": r.config,
@@ -179,7 +179,7 @@ fn eval(app: &AppHandle, label: &str, js: &str) -> Value {
 
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let (tx, rx) = mpsc::channel();
-    pending.lock().unwrap().insert(id, tx);
+    lock_recovering(pending).insert(id, tx);
 
     // The source is passed as a *string* and compiled with `new Function`, so
     // that a syntax error is a catchable exception rather than a script that
@@ -209,13 +209,13 @@ fn eval(app: &AppHandle, label: &str, js: &str) -> Value {
     );
 
     if let Err(e) = w.eval(&script) {
-        pending.lock().unwrap().remove(&id);
+        lock_recovering(pending).remove(&id);
         return json!({ "error": format!("eval failed: {e}") });
     }
     match rx.recv_timeout(EVAL_TIMEOUT) {
         Ok(v) => v,
         Err(_) => {
-            pending.lock().unwrap().remove(&id);
+            lock_recovering(pending).remove(&id);
             json!({ "error": "timed out waiting for the webview" })
         }
     }

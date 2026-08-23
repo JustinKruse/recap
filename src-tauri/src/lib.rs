@@ -1,11 +1,12 @@
-pub mod cli;
 mod capture;
+pub mod cli;
 // Debug-only: exposes an eval-anything socket. Must never ship in release.
 #[cfg(debug_assertions)]
 mod devctl;
 mod editor;
 mod ffmpeg;
 mod ocr;
+mod permissions;
 mod recorder;
 mod scroll;
 mod settings;
@@ -48,6 +49,10 @@ struct InitInfo {
     config: RecordingConfig,
     /// Which capture backend is active, e.g. "macos-avfoundation".
     backend: &'static str,
+    /// Screen Recording (TCC) status on macOS; always `true` elsewhere. Lets
+    /// the UI show the permission banner on first paint instead of waiting
+    /// for a capture to fail.
+    screen_recording_granted: bool,
 }
 
 fn monitor_list(app: &tauri::AppHandle) -> Vec<MonitorInfo> {
@@ -66,6 +71,18 @@ fn monitor_list(app: &tauri::AppHandle) -> Vec<MonitorInfo> {
             scale: m.scale_factor(),
         })
         .collect()
+}
+
+/// Where captures actually land: the restored folder if it still exists, the
+/// default otherwise.
+///
+/// A restored folder that has since been deleted is worse than useless — every
+/// capture would fail — so a dead path is never carried forward.
+fn effective_output_dir(app: &tauri::AppHandle, configured: &str) -> String {
+    if !configured.is_empty() && PathBuf::from(configured).is_dir() {
+        return configured.to_string();
+    }
+    default_output_dir(app)
 }
 
 fn default_output_dir(app: &tauri::AppHandle) -> String {
@@ -100,15 +117,11 @@ fn init_info(
     let monitors = monitor_list(&app);
     let default_dir = default_output_dir(&app);
     let config = {
-        let mut r = state.0.lock().unwrap();
+        let mut r = state.lock();
         r.ffmpeg_path = ffmpeg_path.clone();
         r.encoders = encoders.clone();
         r.screens = screens;
-        // A restored folder that has since been deleted is worse than useless:
-        // every capture would fail. Fall back rather than persist a dead path.
-        if r.config.output_dir.is_empty() || !PathBuf::from(&r.config.output_dir).is_dir() {
-            r.config.output_dir = default_dir.clone();
-        }
+        r.config.output_dir = effective_output_dir(&app, &r.config.output_dir);
         // The monitor list can shrink between runs (display unplugged).
         if r.config.monitor_index >= monitors.len().max(1) {
             r.config.monitor_index = 0;
@@ -123,6 +136,7 @@ fn init_info(
         default_output_dir: default_dir,
         config,
         backend: backend.name(),
+        screen_recording_granted: permissions::screen_recording_granted(),
     })
 }
 
@@ -130,7 +144,7 @@ fn init_info(
 /// always use fresh config.
 #[tauri::command]
 fn sync_config(state: tauri::State<RecorderHandle>, cfg: RecordingConfig) {
-    state.0.lock().unwrap().apply_config(cfg);
+    state.lock().apply_config(cfg);
     settings::save_debounced(&state);
 }
 
@@ -157,7 +171,7 @@ fn open_region_overlay(
         .get(monitor_index)
         .ok_or_else(|| "monitor not found".to_string())?;
     {
-        let mut r = state.0.lock().unwrap();
+        let mut r = state.lock();
         r.pending_overlay_monitor = monitor_index;
     }
     let window = WebviewWindowBuilder::new(&app, "overlay", WebviewUrl::App("overlay.html".into()))
@@ -186,7 +200,7 @@ fn open_region_overlay(
 
 #[tauri::command]
 fn start_recording(app: tauri::AppHandle, cfg: RecordingConfig) -> Result<(), String> {
-    app.state::<RecorderHandle>().0.lock().unwrap().apply_config(cfg);
+    app.state::<RecorderHandle>().lock().apply_config(cfg);
     recorder::start(&app)
 }
 
@@ -194,7 +208,7 @@ fn start_recording(app: tauri::AppHandle, cfg: RecordingConfig) -> Result<(), St
 /// `screencapture`/ffmpeg take a moment and blocking here freezes the window.
 #[tauri::command]
 async fn capture_still(app: tauri::AppHandle, cfg: RecordingConfig) -> Result<String, String> {
-    app.state::<RecorderHandle>().0.lock().unwrap().apply_config(cfg);
+    app.state::<RecorderHandle>().lock().apply_config(cfg);
     // Give the compositor a beat to finish hiding our own window before we
     // photograph the screen it was just covering.
     std::thread::sleep(std::time::Duration::from_millis(220));
@@ -206,7 +220,7 @@ async fn capture_still(app: tauri::AppHandle, cfg: RecordingConfig) -> Result<St
 /// the user asked for text, not another PNG in their folder.
 #[tauri::command]
 async fn grab_text(app: tauri::AppHandle, cfg: RecordingConfig) -> Result<ocr::OcrResult, String> {
-    app.state::<RecorderHandle>().0.lock().unwrap().apply_config(cfg);
+    app.state::<RecorderHandle>().lock().apply_config(cfg);
     read_screen_text(&app)
 }
 
@@ -233,11 +247,13 @@ pub(crate) fn read_screen_text(app: &tauri::AppHandle) -> Result<ocr::OcrResult,
 /// over the scrollable area anyway.
 #[tauri::command]
 async fn capture_scrolling(app: tauri::AppHandle, cfg: RecordingConfig) -> Result<String, String> {
-    app.state::<RecorderHandle>().0.lock().unwrap().apply_config(cfg);
+    app.state::<RecorderHandle>().lock().apply_config(cfg);
     let (ff, region, display, output_dir) = {
         let state = app.state::<RecorderHandle>();
-        let r = state.0.lock().unwrap();
-        let region = r.region.ok_or("Select a region over the scrollable area first.")?;
+        let r = state.lock();
+        let region = r
+            .region
+            .ok_or("Select a region over the scrollable area first.")?;
         (
             r.ffmpeg_path.clone(),
             region,
@@ -292,10 +308,15 @@ fn stop_recording(app: tauri::AppHandle) -> Result<(), String> {
 /// is tens of megabytes and useless for sharing, which is the only reason to
 /// want a GIF at all.
 #[tauri::command]
-async fn export_gif(app: tauri::AppHandle, path: String, fps: u32, width: u32) -> Result<String, String> {
+async fn export_gif(
+    app: tauri::AppHandle,
+    path: String,
+    fps: u32,
+    width: u32,
+) -> Result<String, String> {
     let ff = {
         let state = app.state::<RecorderHandle>();
-        let r = state.0.lock().unwrap();
+        let r = state.lock();
         r.ffmpeg_path.clone()
     }
     .ok_or_else(|| capture::active().ffmpeg_hint().to_string())?;
@@ -424,13 +445,37 @@ pub fn run() {
             toggle_pause,
             stop_recording,
             reveal_path,
-            export_gif
+            export_gif,
+            permissions::permission_status,
+            permissions::request_screen_recording_access,
+            permissions::open_screen_recording_settings
         ])
         .setup(|app| {
             settings::init(app.handle());
             if let Some(cfg) = settings::load() {
-                app.state::<RecorderHandle>().0.lock().unwrap().config = cfg;
+                app.state::<RecorderHandle>().lock().config = cfg;
             }
+
+            // ---- sweep crash leftovers ------------------------------------
+            // A crash or force-quit mid-recording leaves a .recap-tmp-* folder
+            // of segments in the user's video folder, and nothing else ever
+            // removes it. Done here, before this run can create one of its own,
+            // so telling ours from a stale one needs no bookkeeping; a folder
+            // owned by a *second running* instance is spared by the pid in its
+            // name.
+            // Off-thread because it may shell out once per leftover folder.
+            let output_dir = {
+                let configured = app
+                    .state::<RecorderHandle>()
+                    .lock()
+                    .config
+                    .output_dir
+                    .clone();
+                effective_output_dir(app.handle(), &configured)
+            };
+            std::thread::spawn(move || {
+                recorder::sweep_stale_sessions(&PathBuf::from(output_dir));
+            });
 
             #[cfg(debug_assertions)]
             devctl::start(app.handle());
@@ -452,12 +497,7 @@ pub fn run() {
             let sc_pause = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyP);
             let sc_snap = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyS);
             let sc_text = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyT);
-            let (h_record, h_pause, h_snap, h_text) = (
-                sc_record.clone(),
-                sc_pause.clone(),
-                sc_snap.clone(),
-                sc_text.clone(),
-            );
+            let (h_record, h_pause, h_snap, h_text) = (sc_record, sc_pause, sc_snap, sc_text);
             app.handle().plugin(
                 tauri_plugin_global_shortcut::Builder::new()
                     .with_handler(move |app, shortcut, event| {

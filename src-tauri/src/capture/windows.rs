@@ -170,7 +170,14 @@ impl CaptureBackend for Windows {
         let enc_args: &[&str] = match encoder {
             "h264_nvenc" => &["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "23"],
             "h264_amf" => &["-c:v", "h264_amf", "-quality", "balanced", "-b:v", "10M"],
-            "h264_qsv" => &["-c:v", "h264_qsv", "-global_quality", "23", "-pix_fmt", "nv12"],
+            "h264_qsv" => &[
+                "-c:v",
+                "h264_qsv",
+                "-global_quality",
+                "23",
+                "-pix_fmt",
+                "nv12",
+            ],
             _ => &[
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
             ],
@@ -262,12 +269,8 @@ mod tests {
         let mut c = cfg();
         c.mic_enabled = true;
         c.mic_device = Some("Microphone (Yeti)".into());
-        let args = Windows.segment_args(
-            &c,
-            &target(0, None),
-            "libx264",
-            Path::new("C:/tmp/seg.mp4"),
-        );
+        let args =
+            Windows.segment_args(&c, &target(0, None), "libx264", Path::new("C:/tmp/seg.mp4"));
         let joined = args.join(" ");
         assert!(joined.contains("audio=Microphone (Yeti)"));
         assert!(joined.contains("-map 1:a"));
