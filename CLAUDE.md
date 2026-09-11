@@ -72,7 +72,18 @@ hit-testing and undo/redo were verified without a GUI.
   `screencapture -x -D 1 /tmp/t.png` first.
 - `devctl` is `#[cfg(debug_assertions)]` and does arbitrary JS eval. It must
   never ship in a release build.
+- **A fresh clone cannot build.** `/vendor/` is gitignored (a 45 MB static
+  ffmpeg does not belong in git history) but it is a *build input* —
+  `bundle.resources` copies it into `Recap.app/Contents/Resources`. Repopulate it
+  per `docs/RELEASE.md` step 0 before expecting `cargo tauri build` to work; the
+  bundle step fails loudly rather than shipping a broken app.
 - Custom Tauri commands are **not** capability-gated, but `core:*` ones are. A
   new window that only calls custom commands will appear to work while all its
   events are silently dropped. Add every new window label to
   `capabilities/default.json`.
+
+## Repo
+
+`github.com/JustinKruse/recap` (public, `main`). CI runs from
+`.github/workflows/ci.yml` — pushing workflow changes needs a token with the
+`workflow` scope, not just `repo`.
